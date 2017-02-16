@@ -1,0 +1,2307 @@
+---
+title: 'Kaggle House Prices: Adv. Reg. Tech.'
+author: "Richard Corrado"
+date: "January 12, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This is an exploratory data analysis for the <a href=https://www.kaggle.com/c/house-prices-advanced-regression-techniques>Kaggle House Prices</a> competition. 
+
+The use here of rpart to impute missing values leans heavily on the analysis by <a href=https://www.kaggle.com/bisaria/house-prices-advanced-regression-techniques/handling-missing-data>Bisaria</a>,  while some of the feature engineering was suggested by that of <a href=https://www.kaggle.com/amitchoudhary/house-prices-advanced-regression-techniques/script-v6>Amit Choudhary</a>. The correlation plot was borrowed from <a href=https://www.kaggle.com/notaapple/house-prices-advanced-regression-techniques/detailed-exploratory-data-analysis-using-r>AiO</a>.
+
+The data consists of a testing set with 1460 house sale price observations with 81 features.  The evaluation set consists of 1459 observations of the same features. The evaluation metric is the RMSE of the logs of the predicted vs. true sale prices.
+
+```{r packages, message= FALSE} 
+# load  packages 
+require(ggplot2)
+require(caret)
+require(rpart)
+require(corrplot)
+
+# Set working directory and import datafiles
+setwd("~/code/kaggle/housepricesART")
+
+train <- read.csv("./input/train.csv", stringsAsFactors = F)
+test <- read.csv("./input/test.csv", stringsAsFactors = F)
+  
+dim(train) 
+dim(test)
+
+# take log of sale price
+train$SalePrice <- log(train$SalePrice)
+test$SalePrice <- rep(NA)
+
+df <- rbind(train, test)
+
+str(df)
+
+colSums(sapply(df, is.na))
+```
+## Zero Round
+
+After a full consideration of the analysis in the later sections, we return here to add an early stage of data processing.  Based on the observations in the analysis below, we identified a set of possible outliers.  We then ran the sci-kit learn model LassoLarsCV with 10 folds on the various data sets obtained by dropping combinations of outliers.  The best dataset resulted in an decrease in RMS error of around 15% vs the set that includes all points.  
+
+Our strategy then is to produce  data sets for some of these possibilities so that various exploratory modeling can be done in python. We will design some code to make it relatively easy to generate the necessary data sets and write them to coded file names.
+
+```{r drop1}
+train_size = 1460
+
+# Failsafe in case some operation after dropping rows changes the indexing
+df$HouseId <- df$Id
+
+rel_outliers = c(31, 496, 524, 534, 692, 917, 969, 1183, 1299)
+
+# Modify by hand to drop desired subset of outliers, then adjust the output file name
+# drop_set <- c(524, 692, 1183, 1299)
+# 
+# 
+# 
+# df <- df[-drop_set,]
+# train_size <- train_size - length(drop_set)
+
+# Use one-hot coding in output file name
+# train_output <- "train_tidy-new.csv"
+# test_output <- "test_tidy-new.csv"
+train_output <- "train_tidy_000000000.csv"
+test_output <- "test_tidy_000000000.csv"
+```
+
+## First Round
+
+In the first round, we want to tidy the data, so we will look for inconsistencies and impute missing values. Both the testing and test set have been combined into the dataframe df.  We will start with categorical features first, except those that form groups like those for the Basement and Garage.
+
+#### MSZoning: Identifies the general zoning classification of the sale.
+
+```{r mszoning1}
+summary(as.factor(df$MSZoning))
+which(is.na(df$MSZoning))
+```
+Typical predictors of the zoning might be Neighborhood and local conditions.  We then use rpart to impute the missing values.
+```{r mszoning2}
+mszoning.pred <- c("MSZoning", "Neighborhood", "Condition1", "Condition2", "HouseStyle", "BldgType")
+mszoning.rpart <- rpart(as.factor(MSZoning) ~ ., data = df[!is.na(df$MSZoning),mszoning.pred], method = "class",
+                                na.action=na.omit)
+
+as.character(predict(mszoning.rpart, df[is.na(df$MSZoning),mszoning.pred], type = "class"))
+
+df$MSZoning[is.na(df$MSZoning)] <- as.character(predict(mszoning.rpart, df[is.na(df$MSZoning),mszoning.pred], 
+                                                        type = "class"))
+```
+
+#### Alley: Type of alley access to property
+
+```{r alley1}
+summary(as.factor(df$Alley))
+df$Alley[is.na(df$Alley)] <- rep('None')
+```
+
+Here we simply substitute missing values with 'None'.
+
+####  Utilities: Type of utilities available
+
+```{r utils1}
+summary(as.factor(df$Utilities))
+df$Utilities <- NULL
+```
+Only at most 3 values show variation, so we drop this feature.
+
+#### Exterior1st/2nd: Exterior covering on house
+```{r exterior1}
+summary(as.factor(df$Exterior1st))
+which(is.na(df$Exterior1st))
+
+ext1.pred <- c("Neighborhood", "BldgType", "HouseStyle", "OverallQual", "OverallCond", "YearBuilt", 
+              "YearRemodAdd", "RoofStyle", "RoofMatl", "Exterior1st", "Exterior2nd", 
+              "MasVnrType", "MasVnrArea", "ExterQual", "ExterCond")
+ext1.rpart <- rpart(as.factor(Exterior1st) ~ ., data = df[!is.na(df$Exterior1st),ext1.pred], method = "class",
+                    na.action=na.omit)
+
+as.character(predict(ext1.rpart, df[is.na(df$Exterior1st),ext1.pred], type = "class"))
+
+df$Exterior1st[is.na(df$Exterior1st)] <- 
+  as.character(predict(ext1.rpart, df[is.na(df$Exterior1st),ext1.pred], type = "class"))
+
+levels(as.factor(train$Exterior1st))
+levels(as.factor(test$Exterior1st))
+```
+We note that "ImStucc" and "Stone" are not in the test set, so we will remove the corresponding one-hot variables later in the preprocessing.
+```{r exterior2}
+summary(as.factor(df$Exterior2nd))
+which(is.na(df$Exterior2nd))
+
+ext2.rpart <- rpart(as.factor(Exterior2nd) ~ ., data = df[!is.na(df$Exterior2nd),ext1.pred], method = "class",
+                    na.action=na.omit)
+
+as.character(predict(ext2.rpart, df[is.na(df$Exterior2nd),ext1.pred], type = "class"))
+
+df$Exterior2nd[is.na(df$Exterior2nd)] <- 
+  as.character(predict(ext1.rpart, df[is.na(df$Exterior2nd),ext1.pred], type = "class"))
+
+levels(as.factor(train$Exterior2nd))
+levels(as.factor(test$Exterior2nd))
+```
+"Other" is not in the test set.
+
+#### Electrical: Electrical system
+```{r elec1}
+summary(as.factor(df$Electrical))
+
+elec.pred <- c("BldgType", "HouseStyle", "OverallQual", "OverallCond", "YearBuilt", "YearRemodAdd", "Electrical")
+elec.rpart <- rpart(as.factor(Electrical) ~ ., data = df[!is.na(df$Electrical),elec.pred],
+                    method = "class", na.action=na.omit)
+as.character(predict(elec.rpart, df[is.na(df$Electrical),elec.pred], type = "class"))
+
+df$Electrical[is.na(df$Electrical)] <- 
+  as.character(predict(elec.rpart, df[is.na(df$Electrical),elec.pred], type = "class"))
+
+levels(as.factor(train$Electrical))
+levels(as.factor(test$Electrical))
+```
+'Mix' is not in the test set.
+
+#### KitchenQual: Kitchen quality
+```{r kqual1}
+summary(as.factor(df$KitchenQual))
+
+kit.pred <- c("BldgType", "HouseStyle", "OverallQual", "OverallCond", "YearBuilt", "YearRemodAdd", "KitchenQual")
+kit.rpart <- rpart(as.factor(KitchenQual) ~ .,data = df[!is.na(df$KitchenQual),kit.pred],
+                   method = "class",na.action=na.omit)
+as.character(predict(kit.rpart, df[is.na(df$KitchenQual),kit.pred], type = "class"))
+
+df$KitchenQual[is.na(df$KitchenQual)] <- 
+  as.character(predict(kit.rpart, df[is.na(df$KitchenQual),kit.pred], type = "class"))
+```
+
+#### Functional: Home functionality (Assume typical unless deductions are warranted)
+```{r funct1}
+summary(as.factor(df$Functional))
+
+func.pred <- c("OverallQual", "OverallCond", "YearBuilt", "YearRemodAdd", "ExterQual", "ExterCond","BsmtQual", 
+              "BsmtCond","GarageQual", "GarageCond","SaleType", "SaleCondition", "Functional")
+func.rpart <- rpart(as.factor(Functional) ~ .,data = df[!is.na(df$Functional),func.pred],
+                    method = "class",na.action=na.omit)
+as.character(predict(func.rpart, df[is.na(df$Functional),func.pred], type = "class"))
+
+df$Functional[is.na(df$Functional)] <- 
+  as.character(predict(func.rpart, df[is.na(df$Functional),func.pred], type = "class"))
+```
+
+#### FireplaceQu: Fireplace quality
+```{r firepq1}
+summary(as.factor(df$FireplaceQu))
+which(df$Fireplaces != 0 & is.na(df$FireplaceQu))
+df$FireplaceQu[is.na(df$FireplaceQu)] <- rep('None')
+```
+The NAs here had no fireplace.
+
+#### PoolQC: Pool quality
+```{r poolq1}
+summary(as.factor(df$PoolQC))
+df$PoolQC[which(df$PoolArea == 0 & is.na(df$PoolQC))] <- "None"
+```
+These had no pools.
+```{r poolq2}
+which(df$PoolArea > 0 & is.na(df$PoolQC))
+
+poolq.pred <- c("YearBuilt","YearRemodAdd", "PoolQC", "PoolArea","ExterQual","ExterCond",
+              "YrSold","SaleType","SaleCondition")
+poolq.rpart <- rpart(as.factor(PoolQC) ~ ., data = df[!is.na(df$PoolQC),poolq.pred],
+                    method = "class", na.action=na.omit)
+as.character(predict(poolq.rpart,df[is.na(df$PoolQC),poolq.pred], type="class"))
+
+df$PoolQC[is.na(df$PoolQC)] <- as.character(predict(poolq.rpart,df[is.na(df$PoolQC),poolq.pred], type="class"))
+
+levels(as.factor(train$PoolQC))
+levels(as.factor(test$PoolQC))
+```
+'Fa' is missing in the test set.
+
+#### Fence: Fence quality
+```{r fence1}
+table(is.na(df$Fence))
+df$Fence[is.na(df$Fence)] <- rep('None')
+```
+These had no fence.
+
+#### MiscFeature: Miscellaneous feature not covered in other categories
+```{r miscf1}
+table(is.na(df$MiscFeature))
+df$MiscFeature[is.na(df$MiscFeature)] <- rep('None')
+```
+These had no misc. feature.
+
+#### SaleType: Type of sale
+```{r saletype1}
+table(is.na(df$SaleType))
+
+sale.pred <- c("MSSubClass", "MSZoning", "Street", "Alley", "Neighborhood", "Condition1", 
+              "Condition2", "BldgType", "HouseStyle", "OverallQual", "OverallCond", "YearBuilt", 
+              "YearRemodAdd", "ExterQual", "ExterCond", "BsmtQual", "BsmtCond", "KitchenQual", 
+              "FireplaceQu", "GarageQual", "GarageCond", "PavedDrive", "PoolQC", "YrSold", 
+              "SaleType", "SaleCondition")
+sale.rpart <- rpart(as.factor(SaleType) ~ ., data = df[!is.na(df$SaleType),sale.pred],
+                    method = "class", na.action=na.omit)
+as.character(predict(sale.rpart, df[is.na(df$SaleType),sale.pred], type = "class"))
+
+df$SaleType[is.na(df$SaleType)] <- as.character(predict(sale.rpart, 
+                                                        df[is.na(df$SaleType),sale.pred], type = "class"))
+```
+
+#### MasVnrType: Masonry veneer type
+```{r masvnrtype1}
+summary(as.factor(df$MasVnrType))
+summary(df$MasVnrArea)
+which(is.na(df$MasVnrType) & !is.na(df$MasVnrArea))
+df$MasVnrArea[which(is.na(df$MasVnrType) & !is.na(df$MasVnrArea))]
+```
+We have 24 missing types, 23 missing areas and one obs. with an area but no type.  For the 23 with no type or area we will assume that there is no veneer:
+```{r masvnrtype2}
+df$MasVnrArea[is.na(df$MasVnrArea)] <-rep(0)
+df$MasVnrType[is.na(df$MasVnrType) & df$MasVnrArea == 0] <- rep("None")
+```
+Let's look for missing types with zero area
+```{r masvnrtype3}
+which(is.na(df$MasVnrType) & df$MasVnrArea == 0)
+``` 
+None of these. How about non-None types where the area is zero?
+```{r masvnrtype4}
+which(df$MasVnrType != "None" & df$MasVnrArea == 0)
+df$MasVnrType[which(df$MasVnrType != "None" & df$MasVnrArea == 0)] <- rep("None")
+```
+We assume that the zero area is right and these have no veneer. Are there nonzero areas for None type?
+```{r masvnrtype5}
+table(df$MasVnrArea[df$MasVnrType == 'None'])
+df$MasVnrArea <- ifelse(df$MasVnrArea == 1,0,df$MasVnrArea)
+df$MasVnrType[df$MasVnrArea > 0 & df$MasVnrType == "None" & !is.na(df$MasVnrType)] <- rep(NA)
+```
+The ones with area 1 are probably wrong and we set those to zero area. The others should get their type re-imputed so we set to NA.
+```{r masvnrtype6}
+masvnr.rpart <- rpart(as.factor(MasVnrType) ~ MasVnrArea, 
+                    data = df[!is.na(df$MasVnrType),c("MasVnrType","MasVnrArea")], 
+                    method = "class", na.action=na.omit)
+as.character(predict(masvnr.rpart,df[is.na(df$MasVnrType),c("MasVnrType","MasVnrArea")], type="class"))
+
+df$MasVnrType[is.na(df$MasVnrType)] <- 
+      as.character(predict(masvnr.rpart,df[is.na(df$MasVnrType),c("MasVnrType","MasVnrArea")], type="class"))
+```
+#### Basement Features
+Quite a few houses have no basement, so there are many missing values among the features associated with basements, which are
+```{r basement1}
+c("TotalBsmtSF", "BsmtExposure", "BsmtCond", "BsmtQual","BsmtFinType1", "BsmtFinType2", 
+              "BsmtFinSF1","BsmtFinSF2", "BsmtUnfSF")
+
+summary(as.factor(df$BsmtQual))
+table(is.na(df$BsmtExposure))
+table(is.na(df$BsmtCond))
+table(is.na(df$BsmtQual))
+table(is.na(df$BsmtFinType2))
+table(is.na(df$BsmtFinType1))
+table(is.na(df$BsmtFinSF1) & is.na(df$BsmtFinSF2) & is.na(df$BsmtUnfSF))
+table(is.na(df$BsmtFullBath) & is.na(df$BsmtHalfBath))
+table(df$TotalBsmtSF == 0 & is.na(df$BsmtExposure))
+```
+The categorical features are 
+```{r basement 2}
+bsmt.col <- c("BsmtExposure", "BsmtCond", "BsmtQual","BsmtFinType1", "BsmtFinType2")
+which(is.na(df$BsmtExposure) & is.na(df$TotalBsmtSF))
+df$TotalBsmtSF[which(is.na(df$BsmtExposure) & is.na(df$TotalBsmtSF))] <- 0
+```
+2121 has NAs for everything including TotalBsmtSF, so we assume there is no basement. There are 79 entries with zero area as well, so we set these to no basement:
+```{r basement 3}
+df[df$TotalBsmtSF == 0 & is.na(df$BsmtExposure), bsmt.col] <- 
+  apply(df[df$TotalBsmtSF == 0 & is.na(df$BsmtExposure), bsmt.col], 2, function(x) x <- rep("None"))
+```
+We'll use the following predictors for the missing values (I tried adding BldgType and Foundation here, but rpart is too slow):
+```{r basement 4}
+bsmt.pred <- c("BsmtExposure", "BsmtCond", "BsmtQual","BsmtFinType1", "BsmtFinType2","TotalBsmtSF","YearBuilt")
+
+BsmtFinType2.rpart <- rpart(as.factor(BsmtFinType2) ~ ., data = df[!is.na(df$BsmtFinType2),bsmt.pred], 
+                            method = "class", na.action=na.omit)
+
+df$BsmtFinType2[is.na(df$BsmtFinType2)] <- 
+  as.character(predict(BsmtFinType2.rpart, df[is.na(df$BsmtFinType2),bsmt.pred], type="class"))
+
+BsmtQual.rpart <- rpart(as.factor(BsmtQual) ~ ., data = df[!is.na(df$BsmtQual),bsmt.pred], 
+                        method = "class", na.action=na.omit)
+
+df$BsmtQual[is.na(df$BsmtQual)] <- 
+  as.character(predict(BsmtQual.rpart, df[is.na(df$BsmtQual),bsmt.pred], type="class"))
+
+BsmtCond.rpart <- rpart(as.factor(BsmtCond) ~ ., data = df[!is.na(df$BsmtCond),bsmt.pred], 
+                        method = "class",  na.action=na.omit)
+
+df$BsmtCond[is.na(df$BsmtCond)] <- 
+  as.character(predict(BsmtCond.rpart, df[is.na(df$BsmtCond),bsmt.pred],  type="class"))
+
+BsmtExposure.rpart <- rpart(as.factor(BsmtExposure) ~ ., data = df[!is.na(df$BsmtExposure),bsmt.pred], 
+                            method = "class", na.action=na.omit)
+
+df$BsmtExposure[is.na(df$BsmtExposure)] <- 
+  as.character(predict(BsmtExposure.rpart, df[is.na(df$BsmtExposure),bsmt.pred], type="class"))
+
+df[is.na(df$BsmtFinSF1)|is.na(df$BsmtFinSF2)|is.na(df$BsmtUnfSF),
+  c(bsmt.pred, c("BsmtFinSF1", "BsmtFinSF2","BsmtUnfSF", "BsmtFullBath","BsmtHalfBath"))]
+
+df$BsmtFinSF1[is.na(df$BsmtFinSF1)|is.na(df$BsmtFinSF2)|is.na(df$BsmtUnfSF)] <- 0
+df$BsmtFinSF2[is.na(df$BsmtFinSF1)|is.na(df$BsmtFinSF2)|is.na(df$BsmtUnfSF)] <- 0
+df$BsmtUnfSF[is.na(df$BsmtFinSF1)|is.na(df$BsmtFinSF2)|is.na(df$BsmtUnfSF)] <- 0
+df$BsmtFullBath[df$TotalBsmtSF == 0 & is.na(df$BsmtFullBath)] <- rep(0)
+df$BsmtHalfBath[df$TotalBsmtSF == 0 & is.na(df$BsmtHalfBath)] <- rep(0)
+```
+The entry 2121 was assigned no basement.
+
+#### Garage features
+```{r garage1}
+summary(df$GarageYrBlt)
+which(df$GarageYrBlt == 2207)
+df$YearBuilt[which(df$GarageYrBlt == 2207)]
+df$GarageYrBlt[which(df$GarageYrBlt == 2207)] <- 2007
+```
+We're assuming 2207 was a typo and should be 2007, since the house was built in 2006.  
+```{r garage2}
+table(is.na(df$GarageType))
+table(is.na(df$GarageArea))
+table(is.na(df$GarageCars))
+table(is.na(df$GarageArea) & is.na(df$GarageCars))
+table(is.na(df$GarageYrBlt))
+table(is.na(df$GarageFinish))
+table(is.na(df$GarageQual))
+table(is.na(df$GarageCond))
+table(is.na(df$GarageYrBlt) & is.na(df$GarageFinish) & is.na(df$GarageQual) & is.na(df$GarageCond))
+table(df$GarageArea == 0 & df$GarageCars==0 & is.na(df$GarageType))
+col.Garage <- c("GarageType", "GarageYrBlt", "GarageFinish", "GarageQual","GarageCond")
+```
+We find 157 with GarageType NA,one with GarageArea and GarageCars as NA, and 159 with GarageYrBlt, GarageFinish, GarageQual and GarageCond as NA.
+For the  157 houses with GarageArea = 0 and no GarageType we set all other garage features to None:
+```{r garage3}
+df[df$GarageArea == 0 & df$GarageCars==0 & is.na(df$GarageType), col.Garage] <- 
+  apply(df[df$GarageArea == 0 & df$GarageCars==0 & is.na(df$GarageType), 
+           col.Garage], 2, function(x) x <- rep("None"))
+```
+For the remaining values, we impute:
+```{r garage4}
+col.pred <- c("GarageType", "GarageYrBlt", "GarageFinish", "GarageQual","GarageCond","YearBuilt", 
+              "GarageCars", "GarageArea")
+
+area.rpart <- rpart(GarageArea ~ ., data = df[!is.na(df$GarageArea),col.pred],
+                    method = "anova", na.action=na.omit)
+df$GarageArea[is.na(df$GarageArea)] <- round(predict(area.rpart, df[is.na(df$GarageArea),col.pred]))
+
+
+cars.rpart <- rpart(GarageCars ~ .,data = df[!is.na(df$GarageCars),col.pred],
+                    method = "anova", na.action=na.omit)
+df$GarageCars[is.na(df$GarageCars)] <- round(predict(cars.rpart, df[is.na(df$GarageCars),col.pred]))
+
+blt.rpart <- rpart(as.factor(GarageYrBlt) ~ .,data = df[!is.na(df$GarageYrBlt),col.pred],
+                   method = "class",na.action=na.omit)
+
+df$GarageYrBlt[is.na(df$GarageYrBlt)] <- 
+  as.numeric(as.character(predict(blt.rpart, 
+                                  df[is.na(df$GarageYrBlt),col.pred], type = "class")))
+
+df[is.na(df$GarageFinish) & is.na(df$GarageQual) & is.na(df$GarageCond),
+   c(col.Garage, c("GarageCars", "GarageArea"))]
+```
+For the two remaining houses with missing data, we'll look at comparables:
+```{r garage5}
+df[which(df$GarageType == "Detchd" &  df$GarageCars == 1 & df$GarageYrBlt == 1950),col.Garage]
+
+df$GarageFinish[df$GarageType == "Detchd" &  df$GarageYrBlt == 1950 & is.na(df$GarageFinish)] <- "Unf"
+df$GarageQual[df$GarageType == "Detchd" &  df$GarageYrBlt == 1950 & is.na(df$GarageQual)] <- "TA"
+df$GarageCond[df$GarageType == "Detchd" &  df$GarageYrBlt == 1950 & is.na(df$GarageCond)] <- "TA"
+
+levels(as.factor(train$GarageQual))
+levels(as.factor(test$GarageQual))
+```
+The GarageQual level "Ex" is not in the test set
+
+#### LotFrontage: Linear feet of street connected to property
+```{r lotfrontage1}
+summary(df$LotFrontage)
+```
+There are 486 NA's. Let's impute these values.
+```{r lotfrontage2}
+lotf.pred <- c("MSSubClass", "MSZoning", "LotFrontage", "Street", "Alley", "LotArea", "LotShape", 
+              "LandContour", "LotConfig", "LandSlope",  "Neighborhood", "GarageType")
+lotf.rpart <- rpart(LotFrontage ~ ., data = df[!is.na(df$LotFrontage),lotf.pred],
+                       method = "anova", na.action=na.omit)
+df.frontage <- as.data.frame(rbind(cbind(rep("Existing", nrow(df[!is.na(df$LotFrontage),])),
+                                         df[!is.na(df$LotFrontage), "LotFrontage"]),
+                                   cbind(rep("Imputed", nrow(df[is.na(df$LotFrontage),])),
+                                         ceiling(predict(lotf.rpart, df[is.na(df$LotFrontage),lotf.pred])))))
+```
+The imputed values are somewhat less-normal/more-skewed than the existing ones:
+```{r lotfrontage3}
+ggplot(df.frontage, aes (x = as.numeric(as.character(V2)), colour = V1)) +
+  geom_density() + xlab("Lot Frontage") + theme(legend.title=element_blank())
+```
+```{r lotfrontage4}
+df$LotFrontage[is.na(df$LotFrontage)] <- ceiling(predict(lotf.rpart, df[is.na(df$LotFrontage),lotf.pred]))
+```
+
+
+#### MSSubClass: Identifies the type of dwelling involved in the sale.
+
+```{r mssubclass1}
+summary(as.factor(df$MSSubClass))
+```
+
+There are no NAs, but some factors have low counts and therefore poor statistical significance.  We note that
+much of the information in these factors is duplicated in HouseStyle and BldgType.  Where there are inconsistencies,
+we will trust the latter information, since MSSubClass relies on translation to a numerical code, which could
+be a source of coding error.
+
+```{r mssubclass2}
+which(df$HouseStyle == "1.5Fin" & (df$MSSubClass != 50 & df$MSSubClass != 90 & df$MSSubClass != 150 &
+                                     df$MSSubClass != 190))
+df$MSSubClass[which(df$HouseStyle == "1.5Fin" & (df$MSSubClass != 50 & df$MSSubClass != 90 &
+                                                   df$MSSubClass != 150 & df$MSSubClass != 190))]
+df$MSSubClass[which(df$HouseStyle == "1.5Fin" & (df$MSSubClass != 50 & df$MSSubClass != 90 & 
+                                                   df$MSSubClass != 150 & df$MSSubClass != 190))] <- 50
+
+which(df$HouseStyle == "1.5Unf" & (df$MSSubClass != 45 & df$MSSubClass != 90 & 
+                                     df$MSSubClass != 150 & df$MSSubClass != 190))
+df$MSSubClass[which(df$HouseStyle == "1.5Unf" & (df$MSSubClass != 45 & df$MSSubClass != 90 &
+                                                   df$MSSubClass != 150 & df$MSSubClass != 190))]
+df$MSSubClass[which(df$HouseStyle == "1.5Unf" & (df$MSSubClass != 45 & df$MSSubClass != 90 & 
+                                                   df$MSSubClass != 150 & df$MSSubClass != 190))] <- 45
+
+which(df$HouseStyle == "1Story" & df$MSSubClass != 20 &  df$MSSubClass != 30 &  df$MSSubClass != 40 & 
+        df$MSSubClass != 90 & df$MSSubClass != 120 & df$MSSubClass != 190)
+
+which(df$HouseStyle == "2.5Fin" & df$MSSubClass != 75 & df$MSSubClass != 90 & df$MSSubClass != 160 &
+        df$MSSubClass != 190)
+df$MSSubClass[which(df$HouseStyle == "2.5Fin" & df$MSSubClass != 75 & df$MSSubClass != 90 & 
+                      df$MSSubClass != 160 &df$MSSubClass != 190)]
+df$MSSubClass[which(df$HouseStyle == "2.5Fin" & df$MSSubClass != 75 & df$MSSubClass != 90 & 
+                      df$MSSubClass != 160 & df$MSSubClass != 190)] <- 75
+
+which(df$HouseStyle == "2Story" & df$MSSubClass != 60 &  df$MSSubClass != 70 & df$MSSubClass != 90 & 
+        df$MSSubClass != 160 & df$MSSubClass != 190)
+df$MSSubClass[which(df$HouseStyle == "2Story" & df$MSSubClass != 60 &  df$MSSubClass != 70 & 
+                      df$MSSubClass != 90 &  df$MSSubClass != 160 & df$MSSubClass != 190)]
+df$MSSubClass[which(df$YearBuilt >= 1946 & df$HouseStyle == "2Story" & df$MSSubClass != 60 &  
+                      df$MSSubClass != 70 & df$MSSubClass != 90 &   df$MSSubClass != 160 & 
+                      df$MSSubClass != 190)] <- 60
+df$MSSubClass[which(df$YearBuilt <= 1945 & df$HouseStyle == "2Story" &  df$MSSubClass != 60 &  
+                      df$MSSubClass != 70 & df$MSSubClass != 90 & df$MSSubClass != 160 &
+                      df$MSSubClass != 190)] <- 70
+
+which(df$HouseStyle == "SFoyer" & (df$MSSubClass != 85 & df$MSSubClass != 90 & 
+                                     df$MSSubClass != 180 & df$MSSubClass != 190))
+df$MSSubClass[which(df$HouseStyle == "SFoyer" & (df$MSSubClass != 85 & df$MSSubClass != 90 & 
+                                                   df$MSSubClass != 180 & df$MSSubClass != 190))]
+df$MSSubClass[which(df$HouseStyle == "SFoyer" & (df$MSSubClass != 85 & df$MSSubClass != 90 & 
+                                                   df$MSSubClass != 180 & df$MSSubClass != 190))] <- 180
+
+which(df$HouseStyle == "SLvl" & (df$MSSubClass != 80 & df$MSSubClass != 90 & 
+                                   df$MSSubClass != 180 & df$MSSubClass != 190))
+df$MSSubClass[which(df$HouseStyle == "SLvl" & (df$MSSubClass != 80 & df$MSSubClass != 90 &
+                                                 df$MSSubClass != 180 & df$MSSubClass != 190))]
+df$MSSubClass[which(df$MSSubClass == 160 & df$HouseStyle == "SLvl" )] <- 180
+df$MSSubClass[which(df$HouseStyle == "SLvl" & 
+                      (df$MSSubClass == 20 | df$MSSubClass == 60) )] <- 80
+
+which(df$BldgType == "1Fam" & df$MSSubClass == 190)
+df$HouseStyle[which(df$BldgType == "1Fam" & df$MSSubClass == 190)]
+df$YearBuilt[which(df$BldgType == "1Fam" & df$MSSubClass == 190)]
+df$MSSubClass[which(df$BldgType == "1Fam" & df$MSSubClass == 190)] <- 20
+
+which(df$BldgType == "2fmCon" & df$MSSubClass != 190)
+df$MSSubClass[which(df$BldgType == "2fmCon" & df$MSSubClass != 190)] <- 190
+
+which(df$BldgType == "Duplex" & df$MSSubClass != 90)
+
+which((df$BldgType == "Twnhs" | df$BldgType == "TwnhsE") & 
+        (df$MSSubClass != 120 & df$MSSubClass != 150 & df$MSSubClass != 160 & df$MSSubClass != 180))
+df$MSSubClass[which((df$BldgType == "Twnhs" | df$BldgType == "TwnhsE") & 
+                      (df$MSSubClass != 120 & df$MSSubClass != 150 & df$MSSubClass != 160 & df$MSSubClass != 180))]
+df$MSSubClass[which((df$BldgType == "Twnhs" | df$BldgType == "TwnhsE") & 
+                      (df$MSSubClass != 120 & df$MSSubClass != 150 & df$MSSubClass != 160 & df$MSSubClass != 180))] <- 120
+
+# this is a categorical variable
+df$MSSubClass <- as.factor(df$MSSubClass)
+summary(df$MSSubClass)
+```
+
+## Second Round
+
+In this 2nd round, we begin engineering features.  We will start with the categorical variables and then move on to the numerical ones.
+
+#### MSSubClass
+Most of the information here is duplicated by HouseStyle and BldgType. We'll build a numeric feature that increases with the median price in the testing class
+```{r mssubclass4}
+mssc = levels(df$MSSubClass)
+mssc_df = as.data.frame(mssc)
+colnames(mssc_df) <- "MSSubClass"
+
+mssc_meds = (1:length(mssc))
+for (i in (1:length(mssc))){
+  mssc_meds[i] <- median(df$SalePrice[df$MSSubClass == mssc[i]], na.rm = TRUE)
+}
+# class 150 is not in the testing set
+mssc_meds[[13]] <- 
+  median(df$SalePrice[df$MSSubClass == '120' | df$MSSubClass == '160' | df$MSSubClass == '180' ], na.rm = TRUE)
+mssc_df$meds = mssc_meds
+
+mssc_df[ order(mssc_df$meds), ]
+
+df$MSSubClassordered[df$MSSubClass == "180"] <- 1
+df$MSSubClassordered[df$MSSubClass == "30"] <- 2
+df$MSSubClassordered[df$MSSubClass == "45"] <- 3
+df$MSSubClassordered[df$MSSubClass == "190"] <- 4
+df$MSSubClassordered[df$MSSubClass == "50"] <- 5
+df$MSSubClassordered[df$MSSubClass == "90"] <- 6
+df$MSSubClassordered[df$MSSubClass == "85"] <- 7
+df$MSSubClassordered[df$MSSubClass == "40"] <- 8
+df$MSSubClassordered[df$MSSubClass == "160"] <- 9
+df$MSSubClassordered[df$MSSubClass == "70"] <- 10
+df$MSSubClassordered[df$MSSubClass == "20"] <- 11
+df$MSSubClassordered[df$MSSubClass == "75"] <- 12
+df$MSSubClassordered[df$MSSubClass == "150"] <- 13
+df$MSSubClassordered[df$MSSubClass == "80"] <- 14
+df$MSSubClassordered[df$MSSubClass == "120"] <- 15
+df$MSSubClassordered[df$MSSubClass == "60"] <- 16
+ggplot(data=df, aes(as.factor(df$MSSubClassordered),df$SalePrice)) + geom_boxplot()
+ggplot(data=df, aes(df$MSSubClassordered,df$SalePrice)) + geom_point()
+```
+
+#### MSZoning
+```{r mszoning3}
+df$MSZoning <- as.factor(df$MSZoning)
+
+summary(df$MSZoning)
+
+ggplot(data=df, aes(df$MSZoning,df$SalePrice)) + geom_boxplot()
+
+mszoning = levels(df$MSZoning)
+mszoning_df = as.data.frame(mszoning)
+colnames(mszoning_df) <- "MSZoning"
+
+mszoning_meds = (1:length(mszoning))
+for (i in (1:length(mszoning))){
+  mszoning_meds[i] <- median(df$SalePrice[df$MSZoning == mszoning[i]], na.rm = TRUE)
+}
+mszoning_df$meds = mszoning_meds
+mszoning_df[ order(mszoning_df$meds), ]
+
+df$MSZoningordered[df$MSZoning == "C (all)"] <- 1
+df$MSZoningordered[df$MSZoning == "RM"] <- 2
+df$MSZoningordered[df$MSZoning == "RH"] <- 3
+df$MSZoningordered[df$MSZoning == "RL"] <- 4
+df$MSZoningordered[df$MSZoning == "FV"] <- 5
+ggplot(data=df, aes(as.factor(df$MSZoningordered),df$SalePrice)) + geom_boxplot()
+```
+
+#### Street
+```{r street1}
+df$Street <- as.factor(df$Street)
+
+summary(df$Street)
+ggplot(data=df, aes(df$Street,df$SalePrice)) + geom_boxplot()
+```
+
+
+#### Alley
+```{r alley3}
+df$Alley <- as.factor(df$Alley)
+summary(df$Alley)
+ggplot(data=df, aes(df$Alley,df$SalePrice)) + geom_boxplot()
+```
+
+#### LotShape
+```{r lotshape1}
+df$LotShape <- as.factor(df$LotShape)
+summary(df$LotShape)
+ggplot(data=df, aes(df$LotShape,df$SalePrice)) + geom_boxplot()
+```
+
+#### LandContour
+```{r landcontour1}
+df$LandContour <- as.factor(df$LandContour)
+summary(df$LandContour)
+ggplot(data=df, aes(df$LandContour,df$SalePrice)) + geom_boxplot()
+
+df$LandContourordered[df$LandContour == "Bnk"] <- 1
+df$LandContourordered[df$LandContour == "Lvl"] <- 2
+df$LandContourordered[df$LandContour == "Low"] <- 3
+df$LandContourordered[df$LandContour == "HLS"] <- 4
+ggplot(data=df, aes(as.factor(df$LandContourordered),df$SalePrice)) + geom_boxplot()
+```
+
+#### LotConfig
+```{r lotconfig1}
+df$LotConfig <- as.factor(df$LotConfig)
+summary(df$LotConfig)
+ggplot(data=df, aes(df$LotConfig,df$SalePrice)) + geom_boxplot()
+
+df$LotConfigordered[df$LotConfig == "Inside"] <- 1
+df$LotConfigordered[df$LotConfig == "Corner"] <- 2
+df$LotConfigordered[df$LotConfig == "FR2"] <- 3
+df$LotConfigordered[df$LotConfig == "FR3"] <- 4
+df$LotConfigordered[df$LotConfig == "CulDSac"] <- 5
+ggplot(data=df, aes(as.factor(df$LotConfigordered),df$SalePrice)) + geom_boxplot()
+```
+
+#### LandSlope
+```{r landslope1}
+df$LandSlope <- as.factor(df$LandSlope)
+summary(df$LandSlope)
+ggplot(data=df, aes(df$LandSlope,df$SalePrice)) + geom_boxplot()
+
+df$LandSlopeordered[df$LandSlope == "Gtl"] <- 1
+df$LandSlopeordered[df$LandSlope == "Sev"] <- 2
+df$LandSlopeordered[df$LandSlope == "Mod"] <- 3
+ggplot(data=df, aes(as.factor(df$LandSlopeordered),df$SalePrice)) + geom_boxplot()
+```
+
+#### Neighborhood
+```{r neighborhood1}
+df$Neighborhood <- as.factor(df$Neighborhood)
+summary(df$Neighborhood)
+neigh = levels(df$Neighborhood)
+neigh_df = as.data.frame(neigh)
+colnames(neigh_df) <- "Neighborhood"
+neigh_meds = (1:length(neigh))
+for (i in (1:length(neigh))){
+  neigh_meds[i] <- median(df$SalePrice[df$Neighborhood == neigh[i]], na.rm = TRUE)
+}
+ neigh_df$meds = neigh_meds
+for (i in (1:length(neigh))){
+   neigh_df$count[i] <- length(df$Neighborhood[df$Neighborhood == neigh[i]])
+}
+
+ggplot(data=neigh_df, aes(neigh_df$meds,neigh_df$count)) + geom_point()
+neigh_df[ order(neigh_df$meds), ]
+ 
+median(df$SalePrice, na.rm = TRUE)
+sd(df$SalePrice, na.rm = TRUE)/2
+
+ggplot(data=df, aes(as.factor(df$Neighborhood),df$SalePrice)) + geom_boxplot()
+```
+
+We will cut price bins around 250000, 195000, 170000, 130000, 115000
+```{r neighborhood2}
+df$Neighborhoodbins[df$Neighborhood == "MeadowV"] <- 1
+df$Neighborhoodbins[df$Neighborhood == "IDOTRR"] <- 1
+df$Neighborhoodbins[df$Neighborhood == "BrDale"] <- 1
+df$Neighborhoodbins[df$Neighborhood == "OldTown"] <- 2
+df$Neighborhoodbins[df$Neighborhood == "Edwards"] <- 2
+df$Neighborhoodbins[df$Neighborhood == "BrkSide"] <- 2
+df$Neighborhoodbins[df$Neighborhood == "Sawyer"] <- 3
+df$Neighborhoodbins[df$Neighborhood == "Blueste"] <- 3
+df$Neighborhoodbins[df$Neighborhood == "SWISU"] <- 3
+df$Neighborhoodbins[df$Neighborhood == "NAmes"] <- 3
+df$Neighborhoodbins[df$Neighborhood == "NPkVill"] <- 3
+df$Neighborhoodbins[df$Neighborhood == "Mitchel"] <- 3
+df$Neighborhoodbins[df$Neighborhood == "SawyerW"] <- 4
+df$Neighborhoodbins[df$Neighborhood == "Gilbert"] <- 4
+df$Neighborhoodbins[df$Neighborhood == "NWAmes"] <- 4
+df$Neighborhoodbins[df$Neighborhood == "Blmngtn"] <- 4
+df$Neighborhoodbins[df$Neighborhood == "CollgCr"] <- 5
+df$Neighborhoodbins[df$Neighborhood == "ClearCr"] <- 5
+df$Neighborhoodbins[df$Neighborhood == "Crawfor"] <- 5
+df$Neighborhoodbins[df$Neighborhood == "Veenker"] <- 5
+df$Neighborhoodbins[df$Neighborhood == "Somerst"] <- 5
+df$Neighborhoodbins[df$Neighborhood == "Timber"] <- 5
+df$Neighborhoodbins[df$Neighborhood == "StoneBr"] <- 6
+df$Neighborhoodbins[df$Neighborhood == "NoRidge"] <- 6
+df$Neighborhoodbins[df$Neighborhood == "NridgHt"] <- 6
+ggplot(data=df, aes(as.factor(df$Neighborhoodbins),df$SalePrice)) + geom_boxplot()
+
+df$GoodNeighborhood <- 0
+df$GoodNeighborhood[df$Neighborhood == "CollgCr"] <- 1
+df$GoodNeighborhood[df$Neighborhood == "ClearCr"] <- 1
+df$GoodNeighborhood[df$Neighborhood == "Crawfor"] <- 1
+df$GoodNeighborhood[df$Neighborhood == "Veenker"] <- 1
+df$GoodNeighborhood[df$Neighborhood == "Somerst"] <- 1
+df$GoodNeighborhood[df$Neighborhood == "Timber"] <- 1
+df$GoodNeighborhood[df$Neighborhood == "StoneBr"] <- 1
+df$GoodNeighborhood[df$Neighborhood == "NoRidge"] <- 1
+df$GoodNeighborhood[df$Neighborhood == "NridgHt"] <- 1
+
+df$GreatNeighborhood <- 0
+df$GreatNeighborhood[df$Neighborhood == "StoneBr"] <- 1
+df$GreatNeighborhood[df$Neighborhood == "NoRidge"] <- 1
+df$GreatNeighborhood[df$Neighborhood == "NridgHt"] <- 1
+```
+We also created features that indicate two categories of premium neighborhoods.
+
+#### Condition1
+```{r condone1}
+df$Condition1 <- as.factor(df$Condition1)
+summary(df$Condition1)
+ggplot(data=df, aes(df$Condition1,df$SalePrice)) + geom_boxplot()
+
+condition1 = levels(df$Condition1)
+condition1_df = as.data.frame(condition1)
+colnames(condition1_df) <- "Condition1"
+condition1_meds = (1:length(condition1))
+for (i in (1:length(condition1))){
+  condition1_meds[i] <- median(df$SalePrice[df$Condition1 == condition1[i]], na.rm = TRUE)
+}
+condition1_df$meds = condition1_meds
+condition1_df[ order(condition1_df$meds), ]
+
+df$Condition1nums[df$Condition1 == "Artery"] <- 1
+df$Condition1nums[df$Condition1 == "Feedr"] <- 2
+df$Condition1nums[df$Condition1 == "RRAe"] <- 3
+df$Condition1nums[df$Condition1 == "Norm"] <- 4
+df$Condition1nums[df$Condition1 == "RRAn"] <- 5
+df$Condition1nums[df$Condition1 == "RRNe"] <- 6
+df$Condition1nums[df$Condition1 == "PosN"] <- 7
+df$Condition1nums[df$Condition1 == "PosA"] <- 8
+df$Condition1nums[df$Condition1 == "RRNn"] <- 9
+ggplot(data=df, aes(as.factor(df$Condition1nums),df$SalePrice)) + geom_boxplot()
+```
+
+#### Condition2
+```{r condtwo2}
+df$Condition2 <- as.factor(df$Condition2)
+summary(df$Condition2)
+
+levels(as.factor(train$Condition2))
+levels(as.factor(test$Condition2))
+```
+
+We note that the levelss "RRAe", "RRAn", and "RRNn" are missing from the test set.  We will need to remove these from the testing set after encoding.
+
+#### BldgType
+```{r bldgtype1}
+df$BldgType <- as.factor(df$BldgType)
+summary(df$BldgType)
+ggplot(data=df, aes(df$BldgType,df$SalePrice)) + geom_boxplot()
+
+bldgtype = levels(df$BldgType)
+bldgtype_df = as.data.frame(bldgtype)
+colnames(bldgtype_df) <- "BldgType"
+bldgtype_meds = (1:length(bldgtype))
+for (i in (1:length(bldgtype))){
+  bldgtype_meds[i] <- median(df$SalePrice[df$BldgType == bldgtype[i]], na.rm = TRUE)
+}
+bldgtype_df$meds = bldgtype_meds
+bldgtype_df[ order(bldgtype_df$meds), ]
+
+df$BldgTypenums[df$BldgType == "2fmCon"] <- 1
+df$BldgTypenums[df$BldgType == "Duplex"] <- 2
+df$BldgTypenums[df$BldgType == "Twnhs"] <- 3
+df$BldgTypenums[df$BldgType == "1Fam"] <- 4
+df$BldgTypenums[df$BldgType == "TwnhsE"] <- 5
+ggplot(data=df, aes(as.factor(df$BldgTypenums),df$SalePrice)) + geom_boxplot()
+```
+
+#### HouseStyle
+```{r housestyle2}
+df$HouseStyle <- as.factor(df$HouseStyle)
+summary(df$HouseStyle)
+ggplot(data=df, aes(df$HouseStyle,df$SalePrice)) + geom_boxplot()
+
+housestyle = levels(df$HouseStyle)
+housestyle_df = as.data.frame(housestyle)
+colnames(housestyle_df) <- "HouseStyle"
+housestyle_meds = (1:length(housestyle))
+for (i in (1:length(housestyle))){
+  housestyle_meds[i] <- median(df$SalePrice[df$HouseStyle == housestyle[i]], na.rm = TRUE)
+}
+housestyle_df$meds = housestyle_meds
+housestyle_df[ order(housestyle_df$meds), ]
+
+df$HouseStylenums[df$HouseStyle == "1.5Unf"] <- 1
+df$HouseStylenums[df$HouseStyle == "1.5Fin"] <- 2
+df$HouseStylenums[df$HouseStyle == "2.5Unf"] <- 3
+df$HouseStylenums[df$HouseStyle == "SFoyer"] <- 4
+df$HouseStylenums[df$HouseStyle == "1Story"] <- 5
+df$HouseStylenums[df$HouseStyle == "SLvl"] <- 6
+df$HouseStylenums[df$HouseStyle == "2Story"] <- 7
+df$HouseStylenums[df$HouseStyle == "2.5Fin"] <- 8
+ggplot(data=df, aes(as.factor(df$HouseStylenums),df$SalePrice)) + geom_boxplot()
+
+levels(as.factor(train$HouseStyle))
+levels(as.factor(test$HouseStyle))
+```
+
+Here "2.5Fin" is missing from the test set.
+
+#### OverallQual
+
+While seemingly ordinal, this variable is also a translation of categorical ratings "Poor", "Fair", etc.  We'll set a dummy ordinal for this and OverallCond below.
+```{r overallq1}
+df$OverallQualcat <- as.factor(df$OverallQual)
+summary(df$OverallQualcat)
+ggplot(data=df, aes(as.factor(df$OverallQual),df$SalePrice)) + geom_boxplot()
+```
+
+We will make bins for the top and low ends.
+```{r overallq2}
+df$OverallQualGood <- 0
+df$OverallQualBad <- 0
+df$OverallQualGood[df$OverallQual == 8] <- 1
+df$OverallQualGood[df$OverallQual == 9] <- 1
+df$OverallQualGood[df$OverallQual == 10] <- 1
+df$OverallQualBad[df$OverallQual == 1] <- 1
+df$OverallQualBad[df$OverallQual == 2] <- 1
+```
+
+#### OverallCond
+```{r overallc1}
+df$OverallCondcat <- as.factor(df$OverallCond)
+summary(df$OverallCondcat)
+ggplot(data=df, aes(as.factor(df$OverallCond),df$SalePrice)) + geom_boxplot()
+
+df$OverallCondBad <- 0
+df$OverallCondBad[df$OverallCond == 1] <- 1
+df$OverallCondBad[df$OverallCond == 2] <- 1
+df$OverallCondBad[df$OverallCond == 3] <- 1
+df$OverallCondBad[df$OverallCond == 4] <- 1
+
+ggplot(data=df, aes(df$OverallCond,df$SalePrice)) + geom_point() + 
+  geom_smooth(method=lm, data=df, formula = y ~ x + sqrt(x))
+```
+
+Only need a bin for bad condition.  In the last plot, we see that there are some outliers and the ordinal nature of the variable doesn't suggest a useful transformation to make this any more linear.
+
+#### RoofStyle
+```{r roofstyle}
+df$RoofStyle <- as.factor(df$RoofStyle)
+summary(df$RoofStyle)
+ggplot(data=df, aes(df$RoofStyle,df$SalePrice)) + geom_boxplot()
+
+roofstyle = levels(df$RoofStyle)
+roofstyle_df = as.data.frame(roofstyle)
+colnames(roofstyle_df) <- "RoofStyle"
+roofstyle_meds = (1:length(roofstyle))
+for (i in (1:length(roofstyle))){
+  roofstyle_meds[i] <- median(df$SalePrice[df$RoofStyle == roofstyle[i]], na.rm = TRUE)
+}
+# 
+roofstyle_df$meds = roofstyle_meds
+roofstyle_df[ order(roofstyle_df$meds), ]
+
+df$RoofStylenums[df$RoofStyle == "Gambrel"] <- 1
+df$RoofStylenums[df$RoofStyle == "Gable"] <- 2
+df$RoofStylenums[df$RoofStyle == "Mansard"] <- 3
+df$RoofStylenums[df$RoofStyle == "Hip"] <- 4
+df$RoofStylenums[df$RoofStyle == "Flat"] <- 5
+df$RoofStylenums[df$RoofStyle == "Shed"] <- 6
+ggplot(data=df, aes(as.factor(df$RoofStylenums),df$SalePrice)) + geom_boxplot()
+```
+
+#### RoofMatl
+```{r roofmatl2}
+df$RoofMatl <- as.factor(df$RoofMatl)
+summary(df$RoofMatl)
+ggplot(data=df, aes(as.factor(df$RoofMatl),df$SalePrice)) + geom_boxplot()
+
+levels(as.factor(train$RoofMatl))
+levels(as.factor(test$RoofMatl))
+```
+
+Here "ClyTile", "Membran", "Metal", and "Roll" are not in the test set. Overall low variation suggests dropping this at some point.
+
+#### Exterior1st
+```{r extfirst3}
+df$Exterior1st <- as.factor(df$Exterior1st)
+summary(df$Exterior1st)
+
+exterior1st = levels(df$Exterior1st)
+exterior1st_df = as.data.frame(exterior1st)
+colnames(exterior1st_df) <- "Exterior1st"
+exterior1st_meds = (1:length(exterior1st))
+for (i in (1:length(exterior1st))){
+  exterior1st_meds[i] <- median(df$SalePrice[df$Exterior1st == exterior1st[i]], na.rm = TRUE)
+}
+exterior1st_df$meds = exterior1st_meds
+exterior1st_df[ order(exterior1st_df$meds), ]
+
+df$Exterior1stnums[df$Exterior1st == "BrkComm"] <- 1
+df$Exterior1stnums[df$Exterior1st == "AsphShn"] <- 2
+df$Exterior1stnums[df$Exterior1st == "CBlock"] <- 3
+df$Exterior1stnums[df$Exterior1st == "AsbShng"] <- 4
+df$Exterior1stnums[df$Exterior1st == "WdShing"] <- 5
+df$Exterior1stnums[df$Exterior1st == "Wd Sdng"] <- 6
+df$Exterior1stnums[df$Exterior1st == "MetalSd"] <- 7
+df$Exterior1stnums[df$Exterior1st == "Stucco"] <- 8
+df$Exterior1stnums[df$Exterior1st == "HdBoard"] <- 9
+df$Exterior1stnums[df$Exterior1st == "BrkFace"] <- 10
+df$Exterior1stnums[df$Exterior1st == "Plywood"] <- 11
+df$Exterior1stnums[df$Exterior1st == "VinylSd"] <- 12
+df$Exterior1stnums[df$Exterior1st == "CemntBd"] <- 13
+df$Exterior1stnums[df$Exterior1st == "Stone"] <- 14
+df$Exterior1stnums[df$Exterior1st == "ImStucc"] <- 15
+ggplot(data=df, aes(as.factor(df$Exterior1stnums),df$SalePrice)) + geom_boxplot()
+```
+
+#### Exterior2nd
+```{r extsecond3}
+df$Exterior2nd <- as.factor(df$Exterior2nd)
+summary(df$Exterior2nd)
+
+exterior2nd = levels(df$Exterior2nd)
+exterior2nd_df = as.data.frame(exterior2nd)
+colnames(exterior2nd_df) <- "Exterior2nd"
+exterior2nd_meds = (1:length(exterior2nd))
+for (i in (1:length(exterior2nd))){
+  exterior2nd_meds[i] <- median(df$SalePrice[df$Exterior2nd == exterior2nd[i]], na.rm = TRUE)
+}
+exterior2nd_df$meds = exterior2nd_meds
+exterior2nd_df[ order(exterior2nd_df$meds), ]
+
+df$Exterior2ndnums[df$Exterior2nd == "Brk Cmn"] <- 8
+df$Exterior2ndnums[df$Exterior2nd == "AsphShn"] <- 6
+df$Exterior2ndnums[df$Exterior2nd == "CBlock"] <- 1
+df$Exterior2ndnums[df$Exterior2nd == "AsbShng"] <- 2
+df$Exterior2ndnums[df$Exterior2nd == "Wd Shng"] <- 4
+df$Exterior2ndnums[df$Exterior2nd == "Wd Sdng"] <- 3
+df$Exterior2ndnums[df$Exterior2nd == "MetalSd"] <- 5
+df$Exterior2ndnums[df$Exterior2nd == "Stucco"] <- 7
+df$Exterior2ndnums[df$Exterior2nd == "HdBoard"] <- 9
+df$Exterior2ndnums[df$Exterior2nd == "BrkFace"] <- 10
+df$Exterior2ndnums[df$Exterior2nd == "Plywood"] <- 11
+df$Exterior2ndnums[df$Exterior2nd == "VinylSd"] <- 14
+df$Exterior2ndnums[df$Exterior2nd == "CmentBd"] <- 15
+df$Exterior2ndnums[df$Exterior2nd == "Stone"] <- 12
+df$Exterior2ndnums[df$Exterior2nd == "ImStucc"] <- 13
+df$Exterior2ndnums[df$Exterior2nd == "Other"] <- 16
+ggplot(data=df, aes(as.factor(df$Exterior2ndnums),df$SalePrice)) + geom_boxplot()
+```
+
+#### MasVnrType
+```{r masvnrtype7}
+df$MasVnrType <- as.factor(df$MasVnrType)
+summary(df$MasVnrType)
+ggplot(data=df, aes(factor(df$MasVnrType),df$SalePrice)) + geom_boxplot()
+
+df$MasVnrTypenums[df$MasVnrType == "BrkCmn"] <- 1
+df$MasVnrTypenums[df$MasVnrType == "None"] <- 2
+df$MasVnrTypenums[df$MasVnrType == "BrkFace"] <- 3
+df$MasVnrTypenums[df$MasVnrType == "Stone"] <- 4
+ggplot(data=df, aes(as.factor(df$MasVnrTypenums),df$SalePrice)) + geom_boxplot()
+```
+
+#### ExterQual
+```{r exterq1}
+df$ExterQual <- as.factor(df$ExterQual)
+summary(df$ExterQual)
+ggplot(data=df, aes(factor(df$ExterQual),df$SalePrice)) + geom_boxplot()
+
+df$ExterQualnums[df$ExterQual == "Fa"] <- 1
+df$ExterQualnums[df$ExterQual == "TA"] <- 2
+df$ExterQualnums[df$ExterQual == "Gd"] <- 3
+df$ExterQualnums[df$ExterQual == "Ex"] <- 4
+```
+
+####ExterCond
+```{r exterc1}
+df$ExterCond <- as.factor(df$ExterCond)
+summary(df$ExterCond)
+ggplot(data=df, aes(factor(df$ExterCond),df$SalePrice)) + geom_boxplot()
+
+df$ExterCondnums[df$ExterCond == "Po"] <- 0
+df$ExterCondnums[df$ExterCond == "Fa"] <- 1
+df$ExterCondnums[df$ExterCond == "TA"] <- 2
+df$ExterCondnums[df$ExterCond == "Gd"] <- 3
+df$ExterCondnums[df$ExterCond == "Ex"] <- 4
+```
+
+#### Foundation
+```{r found1}
+df$Foundation <- as.factor(df$Foundation)
+summary(df$Foundation)
+ggplot(data=df, aes(factor(df$Foundation),df$SalePrice)) + geom_boxplot()
+
+foundation = levels(df$Foundation)
+foundation_df = as.data.frame(foundation)
+colnames(foundation_df) <- "Foundation"
+foundation_meds = (1:length(foundation))
+for (i in (1:length(foundation))){
+  foundation_meds[i] <- median(df$SalePrice[df$Foundation == foundation[i]], na.rm = TRUE)
+}
+foundation_df$meds = foundation_meds
+foundation_df[ order(foundation_df$meds), ]
+
+df$Foundationnums[df$Foundation == "Slab"] <- 1
+df$Foundationnums[df$Foundation == "BrkTil"] <- 2
+df$Foundationnums[df$Foundation == "Stone"] <- 3
+df$Foundationnums[df$Foundation == "CBlock"] <- 4
+df$Foundationnums[df$Foundation == "Wood"] <- 5
+df$Foundationnums[df$Foundation == "PConc"] <- 6
+ggplot(data=df, aes(as.factor(df$Foundationnums),df$SalePrice)) + geom_boxplot()
+````
+
+#### BsmtQual
+```{r bsmtq1}
+df$BsmtQual <- as.factor(df$BsmtQual)
+summary(df$BsmtQual)
+ggplot(data=df, aes(df$BsmtQual,df$SalePrice)) + geom_boxplot()
+
+df$BsmtQualnums[df$BsmtQual == "None"] <- 0
+df$BsmtQualnums[df$BsmtQual == "Fa"] <- 1
+df$BsmtQualnums[df$BsmtQual == "TA"] <- 2
+df$BsmtQualnums[df$BsmtQual == "Gd"] <- 3
+df$BsmtQualnums[df$BsmtQual == "Ex"] <- 4
+```
+
+#### BsmtCond
+```{r bsmtc1}
+df$BsmtCond <- as.factor(df$BsmtCond)
+summary(df$BsmtCond)
+ggplot(data=df, aes(df$BsmtCond,df$SalePrice)) + geom_boxplot()
+
+df$BsmtCondnums[df$BsmtCond == "Po"] <- 1
+df$BsmtCondnums[df$BsmtCond == "None"] <- 2
+df$BsmtCondnums[df$BsmtCond == "Fa"] <- 3
+df$BsmtCondnums[df$BsmtCond == "TA"] <- 4
+df$BsmtCondnums[df$BsmtCond == "Gd"] <- 5
+```
+
+#### BsmtExposure
+```{r bsmtexp1}
+df$BsmtExposure <- as.factor(df$BsmtExposure)
+summary(df$BsmtExposure)
+ggplot(data=df, aes(df$BsmtExposure,df$SalePrice)) + geom_boxplot()
+
+df$BsmtExposurenums[df$BsmtExposure == "None"] <- 0
+df$BsmtExposurenums[df$BsmtExposure == "No"] <- 1
+df$BsmtExposurenums[df$BsmtExposure == "Mn"] <- 2
+df$BsmtExposurenums[df$BsmtExposure == "Av"] <- 3
+df$BsmtExposurenums[df$BsmtExposure == "Gd"] <- 4
+```
+
+
+#### BsmtFinType1
+```{r bsmtft1}
+df$BsmtFinType1 <- as.factor(df$BsmtFinType1)
+summary(df$BsmtFinType1)
+ggplot(data=df, aes(df$BsmtFinType1,df$SalePrice)) + geom_boxplot()
+
+bsmtfintype1 = levels(df$BsmtFinType1)
+bsmtfintype1_df = as.data.frame(bsmtfintype1)
+colnames(bsmtfintype1_df) <- "BsmtFinType1"
+bsmtfintype1_meds = (1:length(bsmtfintype1))
+for (i in (1:length(bsmtfintype1))){
+  bsmtfintype1_meds[i] <- median(df$SalePrice[df$BsmtFinType1 == bsmtfintype1[i]], na.rm = TRUE)
+}
+bsmtfintype1_df$meds = bsmtfintype1_meds
+bsmtfintype1_df[ order(bsmtfintype1_df$meds), ]
+
+df$BsmtFinType1nums[df$BsmtFinType1 == "None"] <- 0
+df$BsmtFinType1nums[df$BsmtFinType1 == "LwQ"] <- 1
+df$BsmtFinType1nums[df$BsmtFinType1 == "BLQ"] <- 2
+df$BsmtFinType1nums[df$BsmtFinType1 == "Rec"] <- 3
+df$BsmtFinType1nums[df$BsmtFinType1 == "ALQ"] <- 4
+df$BsmtFinType1nums[df$BsmtFinType1 == "Unf"] <- 5
+df$BsmtFinType1nums[df$BsmtFinType1 == "GLQ"] <- 6
+ggplot(data=df, aes(as.factor(df$BsmtFinType1nums),df$SalePrice)) + geom_boxplot()
+```
+
+#### BsmtFinType2
+```{r bsmtft2}
+df$BsmtFinType2 <- as.factor(df$BsmtFinType2)
+summary(df$BsmtFinType2)
+ggplot(data=df, aes(df$BsmtFinType2,df$SalePrice)) + geom_boxplot()
+
+bsmtfintype2 = levels(df$BsmtFinType2)
+bsmtfintype2_df = as.data.frame(bsmtfintype2)
+colnames(bsmtfintype2_df) <- "BsmtFinType2"
+bsmtfintype2_meds = (1:length(bsmtfintype2))
+for (i in (1:length(bsmtfintype2))){
+ bsmtfintype2_meds[i] <- median(df$SalePrice[df$BsmtFinType2 == bsmtfintype2[i]], na.rm = TRUE)
+}
+bsmtfintype2_df$meds = bsmtfintype2_meds
+bsmtfintype2_df[ order(bsmtfintype2_df$meds), ]
+
+df$BsmtFinType2nums[df$BsmtFinType2 == "None"] <- 0
+df$BsmtFinType2nums[df$BsmtFinType2 == "BLQ"] <- 1
+df$BsmtFinType2nums[df$BsmtFinType2 == "Rec"] <- 2
+df$BsmtFinType2nums[df$BsmtFinType2 == "LwQ"] <- 3
+df$BsmtFinType2nums[df$BsmtFinType2 == "Unf"] <- 4
+df$BsmtFinType2nums[df$BsmtFinType2 == "ALQ"] <- 5
+df$BsmtFinType2nums[df$BsmtFinType2 == "GLQ"] <- 6
+ggplot(data=df, aes(as.factor(df$BsmtFinType2nums),df$SalePrice)) + geom_boxplot()
+```
+
+#### Heating
+```{r heating1}
+df$Heating <- as.factor(df$Heating) 
+summary(df$Heating)
+ggplot(data=df, aes(df$Heating,df$SalePrice)) + geom_boxplot()
+
+df$NoGasHeat <- 1
+df$NoGasHeat[df$Heating == 'GasA' | df$Heating == 'GasW'] <- 0
+
+df$Heating <- NULL
+```
+
+#### HeatingQC 
+```{r heatingq1}
+df$HeatingQC <- as.factor(df$HeatingQC) 
+summary(df$HeatingQC)
+ggplot(data=df, aes(df$HeatingQC,df$SalePrice)) + geom_boxplot()
+
+df$BadHeating <- 0
+df$BadHeating[df$HeatingQC == "Po"] <- 1
+df$BadHeating[df$HeatingQC == "Fa"] <- 1
+
+df$HeatingQCnums[df$HeatingQC == "Po"] <- 1
+df$HeatingQCnums[df$HeatingQC == "Fa"] <- 2
+df$HeatingQCnums[df$HeatingQC == "TA"] <- 3
+df$HeatingQCnums[df$HeatingQC == "Gd"] <- 4
+df$HeatingQCnums[df$HeatingQC == "Ex"] <- 5
+ggplot(data=df, aes(as.factor(df$HeatingQCnums),df$SalePrice)) + geom_boxplot()
+```
+
+#### CentralAir
+```{r centair1}
+df$CentralAir <- as.factor(df$CentralAir)
+summary(df$CentralAir)
+ggplot(data=df, aes(df$CentralAir,df$SalePrice)) + geom_boxplot()
+df$NoCentralAir <- 0
+df$NoCentralAir[df$CentralAir == "N"] <- 1
+df$CentralAir <- NULL
+```
+
+#### Electrical
+```{r elect2}
+df$Electrical <- as.factor(df$Electrical)
+summary(df$Electrical)
+ggplot(data=df, aes(df$Electrical,df$SalePrice)) + geom_boxplot()
+df$HasFuse <- 1
+df$HasFuse[df$Electrical == "SBrkr"] <- 0
+
+df$Electrical <- NULL
+```
+
+#### KitchenQual
+```{r kitchq1}
+df$KitchenQual <- as.factor(df$KitchenQual)
+summary(df$KitchenQual)
+ggplot(data=df, aes(df$KitchenQual,df$SalePrice)) + geom_boxplot()
+
+df$KitchenQualnums[df$KitchenQual == "Fa"] <- 1
+df$KitchenQualnums[df$KitchenQual == "TA"] <- 2
+df$KitchenQualnums[df$KitchenQual == "Gd"] <- 3
+df$KitchenQualnums[df$KitchenQual == "Ex"] <- 4
+```
+
+#### Functional
+```{r funct2}
+df$Functional <- as.factor(df$Functional)
+summary(df$Functional)
+ggplot(data=df, aes(df$Functional,df$SalePrice)) + geom_boxplot()
+```
+
+This doesn't seem to be a good regressor for price.  The level "Maj2" has only 9 entries and is statistically dubious.
+
+#### FireplaceQu
+```{r fireplaceq2}
+df$FireplaceQu <- as.factor(df$FireplaceQu)
+summary(df$FireplaceQu)
+ggplot(data=df, aes(df$FireplaceQu,df$SalePrice)) + geom_boxplot()
+
+df$BadFireplace <- 0
+df$BadFireplace[df$FireplaceQu == "TA"] <- 1
+df$BadFireplace[df$FireplaceQu == "Po"] <- 1
+df$BadFireplace[df$FireplaceQu == "None"] <- 1
+
+df$FireplaceQunums[df$FireplaceQu == "Po"] <- 1
+df$FireplaceQunums[df$FireplaceQu == "None"] <- 2
+df$FireplaceQunums[df$FireplaceQu == "Fa"] <- 3
+df$FireplaceQunums[df$FireplaceQu == "TA"] <- 4
+df$FireplaceQunums[df$FireplaceQu == "Gd"] <- 5
+df$FireplaceQunums[df$FireplaceQu == "Ex"] <- 6
+```
+
+#### GarageType
+```{r garaget1}
+df$GarageType <- as.factor(df$GarageType)
+summary(df$GarageType)
+ggplot(data=df, aes(df$GarageType,df$SalePrice)) + geom_boxplot()
+ 
+df$GarageDetach <- 0
+df$GarageDetach[df$GarageType == "Detchd"] <- 1
+df$GarageDetach[df$GarageType == "CarPort"] <- 1
+df$GarageDetach[df$GarageType == "None"] <- 1
+
+df$GarageTypenums[df$GarageType == "None"] <- 0
+df$GarageTypenums[df$GarageType == "CarPort"] <- 1
+df$GarageTypenums[df$GarageType == "Detchd"] <- 2
+df$GarageTypenums[df$GarageType == "Basment"] <- 3
+df$GarageTypenums[df$GarageType == "2Types"] <- 4
+df$GarageTypenums[df$GarageType == "Attchd"] <- 5
+df$GarageTypenums[df$GarageType == "BuiltIn"] <- 6
+ggplot(data=df, aes(as.factor(df$GarageTypenums),df$SalePrice)) + geom_boxplot()
+```
+
+#### GarageFinish: Interior finish of the garage
+```{r garagef1}
+df$GarageFinish = as.factor(df$GarageFinish)
+summary(df$GarageFinish)
+ggplot(data=df, aes(df$GarageFinish,df$SalePrice)) + geom_boxplot()
+
+df$GarageFinishnums[df$GarageFinish == "None"] <- 0
+df$GarageFinishnums[df$GarageFinish == "Unf"] <- 1
+df$GarageFinishnums[df$GarageFinish == "RFn"] <- 2
+df$GarageFinishnums[df$GarageFinish == "Fin"] <- 3
+ggplot(data=df, aes(as.factor(df$GarageFinishnums),df$SalePrice)) + geom_boxplot()
+```
+
+#### GarageQual
+```{r garageq1}
+df$GarageQual <- as.factor(df$GarageQual)
+summary(df$GarageQual)
+ggplot(data=df, aes(df$GarageQual,df$SalePrice)) + geom_boxplot()
+
+df$BadGarageQ <- 0
+df$BadGarageQ[df$GarageQual == "Fa"] <- 1
+df$BadGarageQ[df$GarageQual == "Po"] <- 1
+df$BadGarageQ[df$GarageQual == "None"] <- 1
+
+df$GarageQualnums[df$GarageQual == "Po"] <- 0
+df$GarageQualnums[df$GarageQual == "None"] <- 1
+df$GarageQualnums[df$GarageQual == "Fa"] <- 2
+df$GarageQualnums[df$GarageQual == "Ex"] <- 3
+df$GarageQualnums[df$GarageQual == "TA"] <- 4
+df$GarageQualnums[df$GarageQual == "Gd"] <- 5
+ggplot(data=df, aes(as.factor(df$GarageQualnums),df$SalePrice)) + geom_boxplot()
+```
+
+#### GarageCond
+```{r garagec1}
+df$GarageCond <- as.factor(df$GarageCond)
+summary(df$GarageCond)
+ggplot(data=df, aes(df$GarageCond,df$SalePrice)) + geom_boxplot()
+
+df$BadGarageC <- 0
+df$BadGarageC[df$GarageCond == "Fa"] <- 1
+df$BadGarageC[df$GarageCond == "Po"] <- 1
+df$BadGarageC[df$GarageCond == "None"] <- 1
+
+df$GarageCondnums[df$GarageCond == "None"] <- 0
+df$GarageCondnums[df$GarageCond == "Po"] <- 1
+df$GarageCondnums[df$GarageCond == "Fa"] <- 2
+df$GarageCondnums[df$GarageCond == "Ex"] <- 3
+df$GarageCondnums[df$GarageCond == "Gd"] <- 4
+df$GarageCondnums[df$GarageCond == "TA"] <- 5
+ggplot(data=df, aes(as.factor(df$GarageCondnums),df$SalePrice)) + geom_boxplot()
+```
+
+#### PavedDrive
+```{r paveddrive1}
+df$PavedDrive <- as.factor(df$PavedDrive)
+summary(df$PavedDrive)
+ggplot(data=df, aes(df$PavedDrive,df$SalePrice)) + geom_boxplot()
+```
+
+#### PoolQC
+```{r poolq3}
+df$PoolQC <- as.factor(df$PoolQC)
+summary(df$PoolQC)
+ggplot(data=df, aes(df$PoolQC,df$SalePrice)) + geom_boxplot()
+
+df$PoolQCnums[df$PoolQC == "None"] <- 0
+df$PoolQCnums[df$PoolQC == "TA"] <- 1
+df$PoolQCnums[df$PoolQC == "Gd"] <- 2
+df$PoolQCnums[df$PoolQC == "Fa"] <- 3
+df$PoolQCnums[df$PoolQC == "Ex"] <- 4
+```
+
+#### Fence
+```{r fence2}
+df$Fence <- as.factor(df$Fence)
+summary(df$Fence)
+ggplot(data=df, aes(df$Fence,df$SalePrice)) + geom_boxplot()
+
+df$Fencenums[df$Fence == "MnWw"] <- 1
+df$Fencenums[df$Fence == "MnPrv"] <- 2
+df$Fencenums[df$Fence == "GdWo"] <- 3
+df$Fencenums[df$Fence == "None"] <- 4
+df$Fencenums[df$Fence == "GdPrv"] <- 5
+```
+
+#### MiscFeature
+```{r miscfeat2}
+df$MiscFeature <- as.factor(df$MiscFeature)
+summary(df$MiscFeature)
+ggplot(data=df, aes(df$MiscFeature,df$SalePrice)) + geom_boxplot()
+```
+
+#### MoSold: Month Sold (MM)
+This is coded numeric, but might be useful to treat as a categorical variable.
+```{r mosold1}
+df$MoSoldcat <- as.factor(df$MoSold)
+summary(df$MoSoldcat)
+
+mosold = levels(df$MoSoldcat)
+mosold_df = as.data.frame(mosold)
+colnames(mosold_df) <- "MoSold"
+mosold_meds = (1:length(mosold))
+for (i in (1:length(mosold))){
+  mosold_meds[i] <- median(df$SalePrice[df$MoSoldcat == mosold[i]], na.rm = TRUE)
+}
+mosold_df$meds = mosold_meds
+for (i in (1:length(mosold))){
+ mosold_df$count[i] <- length(df$MoSoldcat[df$MoSoldcat == mosold[i]])
+}
+mosold_df[ order(mosold_df$meds), ]
+mosold_df[ order(mosold_df$count), ]
+
+df$MoSoldnums[df$MoSoldcat == "4"] <- 1
+df$MoSoldnums[df$MoSoldcat == "1"] <- 2
+df$MoSoldnums[df$MoSoldcat == "5"] <- 3
+df$MoSoldnums[df$MoSoldcat == "10"] <- 4
+df$MoSoldnums[df$MoSoldcat == "6"] <- 5
+df$MoSoldnums[df$MoSoldcat == "7"] <- 6
+df$MoSoldnums[df$MoSoldcat == "3"] <- 7
+df$MoSoldnums[df$MoSoldcat == "11"] <- 8
+df$MoSoldnums[df$MoSoldcat == "2"] <- 9
+df$MoSoldnums[df$MoSoldcat == "8"] <- 10
+df$MoSoldnums[df$MoSoldcat == "12"] <- 11
+df$MoSoldnums[df$MoSoldcat == "9"] <- 12
+ggplot(data=df, aes(as.factor(df$MoSoldnums),df$SalePrice)) + geom_boxplot()
+df$MoSoldcat <- NULL
+
+df$SummerSale <- 0
+df$SummerSale[df$MoSold == 5 | df$MoSold == 6 | df$MoSold == 7] <- 1
+```
+
+#### YrSold: Year Sold (YYYY)
+```{r yrsold1}
+df$YrSoldcat <- as.factor(df$YrSold)
+ggplot(data=df, aes(df$YrSoldcat,df$SalePrice)) + geom_boxplot()
+```
+
+####SaleType: Type of sale
+```{r saletype2}
+df$SaleType <- as.factor(df$SaleType)
+summary(df$SaleType)
+ggplot(data=df, aes(df$SaleType,df$SalePrice)) + geom_boxplot()
+
+saletype = levels(df$SaleType)
+saletype_df = as.data.frame(saletype)
+colnames(saletype_df) <- "SaleType"
+saletype_meds = (1:length(saletype))
+for (i in (1:length(saletype))){
+  saletype_meds[i] <- median(df$SalePrice[df$SaleType == saletype[i]], na.rm = TRUE)
+}
+saletype_df$meds = saletype_meds
+saletype_df[ order(saletype_df$meds), ]
+
+df$SaleTypenums[df$SaleType == "Oth"] <- 1
+df$SaleTypenums[df$SaleType == "ConLI"] <- 2
+df$SaleTypenums[df$SaleType == "COD"] <- 3
+df$SaleTypenums[df$SaleType == "ConLD"] <- 4
+df$SaleTypenums[df$SaleType == "ConLw"] <- 5
+df$SaleTypenums[df$SaleType == "WD"] <- 6
+df$SaleTypenums[df$SaleType == "CWD"] <- 7
+df$SaleTypenums[df$SaleType == "New"] <- 8
+df$SaleTypenums[df$SaleType == "Con"] <- 9
+ggplot(data=df, aes(as.factor(df$SaleTypenums),df$SalePrice)) + geom_boxplot()
+```
+
+Bin ConLI CWD New together, since they seem to compare to a premium price:
+```{r saletype3}
+df$SaleTypePrem <- 0
+df$SaleTypePrem[df$SaleType == "ConLI"] <- 1    
+df$SaleTypePrem[df$SaleType == "CWD"]  <- 1     
+df$SaleTypePrem[df$SaleType == "New"]  <- 1 
+```
+
+#### SaleCondition: Condition of sale
+```{r salecond1}
+df$SaleCondition <- as.factor(df$SaleCondition)
+summary(df$SaleCondition)
+ggplot(data=df, aes(df$SaleCondition,df$SalePrice)) + geom_boxplot()
+
+salecondition = levels(df$SaleCondition)
+salecondition_df = as.data.frame(salecondition)
+colnames(salecondition_df) <- "SaleCondition"
+salecondition_meds = (1:length(salecondition))
+for (i in (1:length(salecondition))){
+  salecondition_meds[i] <- median(df$SalePrice[df$SaleCondition == salecondition[i]], na.rm = TRUE)
+}
+salecondition_df$meds = salecondition_meds
+salecondition_df[ order(salecondition_df$meds), ]
+
+df$SaleConditionnums[df$SaleCondition == "AdjLand"] <- 1
+df$SaleConditionnums[df$SaleCondition == "Abnorml"] <- 2
+df$SaleConditionnums[df$SaleCondition == "Family"] <- 3
+df$SaleConditionnums[df$SaleCondition == "Alloca"] <- 4
+df$SaleConditionnums[df$SaleCondition == "Normal"] <- 5
+df$SaleConditionnums[df$SaleCondition == "Partial"] <- 6
+ggplot(data=df, aes(as.factor(df$SaleConditionnums),df$SalePrice)) + geom_boxplot()
+```
+
+
+### Numerical Features
+
+We want to examine the base numeric features and their relationship with the SalePrice and with each other.  We will look for transformations to new features that are more suitable for regression.  We also examine potential outlier and determine the effect of removing observations from the dataset.
+
+These are the base numeric features
+```{r base_numeric}
+base_numerics <- c('Id', 'LotFrontage', 'LotArea', 'OverallQual', 'OverallCond', 'YearBuilt', 'YearRemodAdd', 
+                   'MasVnrArea', 'BsmtFinSF1', 'BsmtFinSF2', 'BsmtUnfSF', 'TotalBsmtSF', 'X1stFlrSF', 
+                   'X2ndFlrSF', 'LowQualFinSF', 'GrLivArea', 'BsmtFullBath', 'BsmtHalfBath', 'FullBath', 
+                   'HalfBath', 'BedroomAbvGr','KitchenAbvGr', 'TotRmsAbvGrd', 'Fireplaces', #'GarageYrBlt', 
+                   'GarageCars', 'GarageArea', 'WoodDeckSF', 'OpenPorchSF', 'EnclosedPorch', 'X3SsnPorch',
+                   'ScreenPorch', 'PoolArea', 'MiscVal', 'MoSold', 'SalePrice')
+
+# GarageYrBlt is set aside for now since the 'None' entries make it non-numeric
+
+train_nums <- df[1:train_size, base_numerics]
+
+# str(train_nums)
+
+correlations <- cor(train_nums[,-1])
+
+
+# correlations
+row_indic <- apply(correlations, 1, function(x) sum(x > 0.3 | x < -0.3) > 1)
+
+correlations <- correlations[row_indic ,row_indic ]
+corrplot(correlations, method="square")
+
+correlations[order(correlations[,'SalePrice'], decreasing = TRUE),'SalePrice']
+```
+
+We will consider these features in order of correlation with the response. 
+
+#### OverallQual
+```{r overallq3}
+ggplot(data=df, aes(df$OverallQual,df$SalePrice)) + geom_point() + geom_smooth(method='lm')
+
+OverallQual.mod = lm(SalePrice ~ OverallQual, data=train_nums)
+LogOverallQual.mod = lm(SalePrice ~ log(OverallQual+1), data=train_nums)
+
+summary(OverallQual.mod)
+summary(LogOverallQual.mod)
+```
+OverallQual isn't especially skewed and a log-transform doesn't appreciably improve the linear fit.
+
+#### GrLivArea: Above grade (ground) living area square feet
+```{r grlivarea1}
+ggplot(data=df, aes(df$GrLivArea)) + geom_histogram()
+
+ggplot(data=df, aes(df$GrLivArea,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df, aes(log(df$GrLivArea+1),df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+df$LogGrLivArea <- log(df$GrLivArea+1)
+```
+
+GrLivArea is skewed, but taking the log leads to a fairly linear trend.  There are a series of outliers at large values of Area, as well as at low SalePrice. These are:
+```{r grlivarea2}
+which(df$GrLivArea[1:train_size] > 4000) 
+which(df$SalePrice[1:train_size] < 10.7)
+```
+Before continuing to examine other promising regressors, we can generate a new feature based on binning roughly around the mean
+```{r grlivarea3}
+df$GrLivAreabin <- 0
+df$GrLivAreabin[df$GrLivArea < 800] <- 1
+df$GrLivAreabin[df$GrLivArea >= 800 & df$GrLivArea < 1000] <- 2
+df$GrLivAreabin[df$GrLivArea >= 1000 & df$GrLivArea < 1200] <- 3
+df$GrLivAreabin[df$GrLivArea >= 1200 & df$GrLivArea < 1400] <- 4
+df$GrLivAreabin[df$GrLivArea >= 1400 & df$GrLivArea < 1600] <- 5
+df$GrLivAreabin[df$GrLivArea >= 1600 & df$GrLivArea < 1800] <- 6
+df$GrLivAreabin[df$GrLivArea >= 1800 & df$GrLivArea < 2000] <- 7
+df$GrLivAreabin[df$GrLivArea >= 2000 & df$GrLivArea < 2200] <- 8
+df$GrLivAreabin[df$GrLivArea >= 2200 & df$GrLivArea < 2400] <- 9
+df$GrLivAreabin[df$GrLivArea >= 2400] <- 10
+```
+
+#### GarageCars and Area
+```{r garagecars1}
+ggplot(data=df, aes(df$GarageCars,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x)
+
+ggplot(data=df, aes(df$GarageArea,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x)
+
+which(df$GarageArea[1:train_size] > 1240)
+```
+There are around 160 houses (81 in the training set) without a garage, but the distribution appears to be such that they don't put too much pressure on the fit.  It might be worth doing some statistics on the subset of houses w/garages.  Note that only one of the outliers here, 1299, overlaps with the GrLivArea outliers.
+
+```{r nogarage1}
+df$NoGarage <- 0
+df$NoGarage[df$GarageArea == 0] <- 1
+```
+
+#### TotalBsmtSF
+```{r tbsf1}
+df$NoBasement <- 0
+df$NoBasement[df$TotalBsmtSF == 0] <- 1
+
+ggplot(data=df, aes(df$TotalBsmtSF,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x)
+
+ggplot(data=df, aes(log(df$TotalBsmtSF+1),df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+which(df$TotalBsmtSF[1:train_size] > 3000)
+```
+Here the log is particular bad because of the accumulation of houses with no basement.  The set of houses with no basement in the training set has around 80 houses, which is probably too small to get good results.  It might be useful to do fits on the set of ~ 1420 houses with basement in the training set.
+
+Finally, we note that two outliers, 524 and 1299, overlap with the GrLivArea set.
+
+We can create a new feature by adding GrLivArea and TotalBsmtSF.
+```{r tha1}
+df$TotalHouseArea <- df$GrLivArea + df$TotalBsmtSF
+
+ggplot(data=df, aes(df$TotalHouseArea,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x)
+
+ggplot(data=df, aes(log(df$TotalHouseArea+1),df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+df$TotalHouseArea <- log(df$TotalHouseArea+1)
+
+TotalHouseArea.mod = lm(SalePrice ~ TotalHouseArea + sqrt(TotalHouseArea), data=df)
+summary(TotalHouseArea.mod)
+
+df$TotalHouseArea <- as.numeric(TotalHouseArea.mod$coefficients[1]) * df$TotalHouseArea + 
+  as.numeric(TotalHouseArea.mod$coefficients[2]) * sqrt(df$TotalHouseArea) 
+
+ggplot(data=df, aes(df$TotalHouseArea,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x)
+```
+
+#### 1stFlrSF: First Floor square feet
+```{r firstf1}
+ggplot(data=df, aes(df$X1stFlrSF,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df, aes(log(df$X1stFlrSF+1),df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+```
+
+The logarithm helps with the skewness, but there is some significant nonlinearity left.  We can build a new feature to remove this:
+```{r firstf2}
+df$X1stLin <- log(df$X1stFlrSF+1)
+
+X1stLin.mod = lm(SalePrice ~ X1stLin + sqrt(X1stLin), data=df)
+summary(X1stLin.mod)
+
+df$X1stLin <- as.numeric(X1stLin.mod$coefficients[1]) * df$X1stLin + 
+  as.numeric(X1stLin.mod$coefficients[2]) * sqrt(df$X1stLin) 
+
+ggplot(data=df, aes(df$X1stLin,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x)
+```
+
+#### FullBath
+
+```{r fullbath1}
+ggplot(data=df, aes(df$FullBath,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x)
+```
+
+We would like to engineer a new feature that takes all of the bathrooms into account. We'll get weights from a simple regression:
+```{r totalbath1}
+bathmodel = lm(SalePrice ~ FullBath + HalfBath + BsmtFullBath + BsmtHalfBath, data = df)
+summary(bathmodel)
+
+as.numeric(bathmodel$coefficients[2])
+
+df$TotalBath <- as.numeric(bathmodel$coefficients[2]) * df$FullBath + 
+  as.numeric(bathmodel$coefficients[3]) * df$HalfBath + 
+  as.numeric(bathmodel$coefficients[4]) * df$BsmtFullBath + 
+  as.numeric(bathmodel$coefficients[5]) * df$BsmtHalfBath 
+
+ggplot(data=df, aes(df$TotalBath,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x)
+```
+
+This data frame has the testing data plus whatever transformations we've made so far. Now we should combine some numerical variables before we perform any scalings or standardization. 
+
+#### YearBuilt
+```{r yearbuilt1}
+ggplot(data=df, aes(df$YearBuilt,df$SalePrice)) + geom_point() + 
+  geom_smooth(method = 'lm', formula = y ~ x + x^2 + sqrt(x))
+
+ggplot(data=df, aes(log(df$YearBuilt+1),df$SalePrice)) + geom_point() + 
+  geom_smooth(method = 'lm', formula = y ~ x + x^2 + sqrt(x))
+```
+
+It might be easier to interpret the age of the house at the time of sale as a feature, this is 
+```{r age1}
+df$Age <- df$YrSold - df$YearBuilt 
+
+ggplot(data=df, aes(df$Age)) + geom_histogram()
+
+ggplot(data=df, aes(df$Age,df$SalePrice)) + geom_point() + 
+  geom_smooth(method = 'lm', formula = y ~ x  + sqrt(x))
+
+ggplot(data=df, aes(log(df$Age+2),df$SalePrice)) + geom_point() + 
+  geom_smooth(method = 'lm', formula = y ~ x  + sqrt(x))
+
+ggplot(data=df, aes(df$Age)) + geom_histogram()
+```
+
+It appears that the logarithm helps smooth the distribution out.  Note that some houses were sold before they were built, so we have to take log(x+2).  Let's build a linearized feature:
+```{r age2}
+age.mod = lm(data=df, SalePrice ~ log(Age + 2) + sqrt(log(Age+2)))
+summary(age.mod)
+df$AgeLin <- as.numeric(age.mod$coefficients[2]) * log(df$Age + 2) +
+  as.numeric(age.mod$coefficients[3]) * sqrt(log(df$Age+2))
+
+ggplot(data=df, aes(df$AgeLin,df$SalePrice)) + geom_point() + 
+  geom_smooth(method = 'lm', formula = y ~ x )
+```
+
+We should also create some new features, including some bins
+```{r age3}
+# very new sales
+df$VNewSale <- 0
+df$VNewSale[df$Age <= 1] <- 1
+
+# 10 year bins
+df$Agebin <- 0
+df$Agebin[df$Age < 10] <- 1
+df$Agebin[df$Age >= 10 & df$Age < 20] <- 2
+df$Agebin[df$Age >= 20 & df$Age < 30] <- 3
+df$Agebin[df$Age >= 30 & df$Age < 40] <- 4
+df$Agebin[df$Age >= 40 & df$Age < 50] <- 5
+df$Agebin[df$Age >= 50 & df$Age < 60] <- 6
+df$Agebin[df$Age >= 60 & df$Age < 70] <- 7
+df$Agebin[df$Age >= 70 & df$Age < 80] <- 8
+df$Agebin[df$Age >= 80 & df$Age < 90] <- 9
+df$Agebin[df$Age >= 90 & df$Age < 100] <- 10
+df$Agebin[df$Age >= 100] <- 11
+
+# note whether a house was remodeled
+df$Remodeled <- 0
+df$Remodeled[which(df$YearRemodAdd != df$YearBuilt)] <- 1
+
+# have to get rid of YearBuilt because it is collinear with Age
+df$YearBuilt <- NULL
+```
+
+#### YearRemodAdd: Remodel date (same as construction date if no remodeling or additions)
+Part of the correlation with SalePrice is probably due to the identification with construction date for  houses that weren't remodeled.  We will again convert to an age variable.
+```{r yearremod1}
+df$RemodAge <- df$YrSold - df$YearRemodAdd
+
+# sold soon after remodel?
+df$RemodSale <- 0
+df$RemodSale[df$RemodAge < 1] <- 1
+
+df$YearRemodAdd <- NULL
+
+# less than 1/2 of houses were remodeled
+summary(as.factor(df$Remodeled))
+
+ggplot(data=df, aes(df$RemodAge)) + geom_histogram()
+
+ggplot(data=df, aes(df$RemodAge,df$SalePrice)) + geom_point() + geom_smooth(method = 'lm')
+
+ggplot(data=df, aes(df$RemodAge,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x +  sqrt(x) )
+
+ggplot(data=df, aes(log(df$RemodAge+3),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+remodage.mod = lm(SalePrice ~ log(RemodAge+3) + sqrt(log(RemodAge+3)), data = df)
+summary(remodage.mod)
+
+df$RemodAgeLin <- as.numeric(remodage.mod$coefficients[2]) * log(df$RemodAge+3) +
+  as.numeric(remodage.mod$coefficients[3]) * sqrt(log(df$RemodAge+3)) 
+
+ggplot(data=df, aes(df$RemodAgeLin,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+```
+
+#### TotRmsAbvGrd: Total rooms above grade (does not include bathrooms)
+```{r totalrooms1}
+ggplot(data=df, aes(df$TotRmsAbvGrd,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+```
+
+#### Fireplaces: Number of fireplaces
+```{r firep1}
+ggplot(data=df, aes(df$Fireplaces,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+```
+
+####MasVnrArea
+```{r masvnr1}
+ggplot(data=df, aes(df$MasVnrArea,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(log(df$MasVnrArea+1),df$SalePrice)) + geom_point()+ 
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+masvnr.mod = lm(data=df, SalePrice ~ log(MasVnrArea+1) + sqrt(log(MasVnrArea+1)))
+summary(masvnr.mod)
+
+df$MasVnrAreaLin =  as.numeric(masvnr.mod$coefficients[2]) * (log(df$MasVnrArea+1)) + 
+  as.numeric(masvnr.mod$coefficients[3]) * sqrt(log(df$MasVnrArea+1))     
+
+ggplot(data=df, aes(df$MasVnrAreaLin,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+```
+
+#### BsmtFinSF1
+```{r bsmtfinsf1}
+ggplot(data=df, aes(df$BsmtFinSF1,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(log(df$BsmtFinSF1+1),df$SalePrice)) + geom_point()+ 
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x) )
+```
+
+This isn't a great regressor. Later, we will create a new feature by adding GrLivArea, BsmtFinSF1 and BsmtFinSF2.
+
+#### LotFrontage: Linear feet of street connected to property
+We had to impute a large number of these values, so we should be suspicious.
+```{r lotfrontage5}
+ggplot(data=df, aes(df$LotFrontage)) + geom_histogram()
+ggplot(data=df, aes(df$LotFrontage,df$SalePrice)) + geom_point() + 
+  geom_smooth(method='lm', formula = y ~ x + x^2 + sqrt(x))
+
+which(df$LotFrontage > 200)
+# only 1299 is in the GrLivArea outliers
+
+df$LotFrontagebin <- 0
+df$LotFrontagebin[df$LotFrontage < 55] <- 1
+df$LotFrontagebin[df$LotFrontage >= 55 & df$LotFrontage < 65] <- 2
+df$LotFrontagebin[df$LotFrontage >= 65 & df$LotFrontage < 75] <- 3
+df$LotFrontagebin[df$LotFrontage >= 75 & df$LotFrontage < 85] <- 4
+df$LotFrontagebin[df$LotFrontage >= 85 & df$LotFrontage < 95] <- 5
+df$LotFrontagebin[df$LotFrontage >= 95 & df$LotFrontage < 105] <- 6
+df$LotFrontagebin[df$LotFrontage >= 105] <- 7
+ggplot(data=df, aes(as.factor(df$LotFrontagebin),df$SalePrice)) + geom_boxplot()
+```
+
+Again not a great regressor. We might choose to drop this and keep the binned feature.  Also note that 1299 was also an outlier here.
+
+####Porches and Decks
+Some consolidation might be in order here.
+```{r porches1}
+porch.mod = lm(data=df, SalePrice ~ WoodDeckSF + OpenPorchSF + EnclosedPorch + X3SsnPorch + ScreenPorch)
+summary(porch.mod)
+
+df$DeckPorch <- 1.019e-03* df$WoodDeckSF + 1.732e-03 * df$OpenPorchSF - 4.546e-04 *  df$EnclosedPorch + 
+  9.296e-04 * df$X3SsnPorch + 8.594e-04 * df$ScreenPorch
+
+ggplot(data=df, aes(df$DeckPorch,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+summary(df$DeckPorch)
+
+ggplot(data=df, aes(log(df$DeckPorch+3),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+deckporch.mod = lm(data=df, SalePrice ~ log(df$DeckPorch+3) + sqrt(log(df$DeckPorch+3)))
+summary(deckporch.mod)
+
+df$DeckPorchLin <- as.numeric(deckporch.mod$coefficients[2]) * sqrt(log(df$DeckPorch+3)) + as.numeric(deckporch.mod$coefficients[3]) * log(df$DeckPorch+3)
+
+df$DeckPorch <- NULL
+
+ggplot(data=df, aes(df$DeckPorchLin,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+df$HasWoodDeck <-0
+df$HasWoodDeck[df$WoodDeckSF != 0] <- 1
+
+df$HasOpenPorch <-0
+df$HasOpenPorch[df$OpenPorchSF != 0] <- 1
+
+df$HasEnclosedPorch <-0
+df$HasEnclosedPorch[df$EnclosedPorch != 0] <- 1
+
+df$Has3SsnPorch <-0
+df$Has3SsnPorch[df$X3SsnPorch != 0] <- 1
+
+df$HasScreenPorch <-0
+df$HasScreenPorch[df$ScreenPorch != 0] <- 1
+
+df$HasDeckorPorch <- 0 
+df$HasDeckorPorch <- (df$HasWoodDeck == 1 | df$HasOpenPorch == 1 | df$HasEnclosedPorch == 1 | 
+                        df$Has3SsnPorch == 1 | df$HasScreenPorch)*1
+```
+
+#### X2ndFlrSF
+```{r secfl1}
+ggplot(data=df, aes(df$X2ndFlrSF,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df, aes(log(df$X2ndFlrSF+1),df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+df$X2ndLin <- log(df$X2ndFlrSF+1)
+
+X2ndLin.mod = lm(SalePrice ~ X2ndLin + sqrt(X2ndLin), data=df)
+summary(X2ndLin.mod)
+
+df$X2ndLin <- as.numeric(X2ndLin.mod$coefficients[2]) * df$X2ndLin +
+  as.numeric(X2ndLin.mod$coefficients[3]) * sqrt(df$X2ndLin)
+
+ggplot(data=df, aes(df$X2ndLin,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x )
+```
+
+#### LotArea: Lot size in square feet
+```{r lotarea1}
+summary(df$LotArea)
+ggplot(data=df, aes(df$LotArea)) + geom_histogram()
+ggplot(data=df, aes(df$LotArea,df$SalePrice)) + geom_point() + geom_smooth(method = 'lm')
+
+which(df$LotArea[1:train_size] > 50000)
+# 1299 is an outlier again
+
+ggplot(data=df, aes(df$LotArea,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+# bin
+df$LotAreabin <- 0
+df$LotAreabin[df$LotArea < 3000] <- 1
+df$LotAreabin[df$LotArea >= 3000 & df$LotArea < 4500] <- 2
+df$LotAreabin[df$LotArea >= 4500 & df$LotArea < 6000] <- 3
+df$LotAreabin[df$LotArea >= 6000 & df$LotArea < 7500] <- 4
+df$LotAreabin[df$LotArea >= 7500 & df$LotArea < 9000] <- 5
+df$LotAreabin[df$LotArea >= 9000 & df$LotArea < 10500] <- 6
+df$LotAreabin[df$LotArea >= 9000 & df$LotArea < 10500] <- 7
+df$LotAreabin[df$LotArea >= 10500 & df$LotArea < 12000] <- 8
+df$LotAreabin[df$LotArea >= 12000 & df$LotArea < 13500] <- 9
+df$LotAreabin[df$LotArea >= 13500] <- 10
+ggplot(data=df, aes(as.factor(df$LotAreabin),df$SalePrice)) + geom_boxplot()
+```
+
+The presence of so many outliers makes this a poor regressor, though it suggests 1299 is again a global outlier.   
+
+#### OverallCond
+```{r overalc2}
+ggplot(data=df, aes(df$OverallCond)) + geom_histogram()
+ggplot(data=df, aes(df$OverallCond,df$SalePrice)) + geom_point() + 
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+ggplot(data=df, aes(log(df$OverallCond+1),df$SalePrice)) + geom_point() + 
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x) )
+```
+
+If anything it seems like higher values of OverallCond don't correlate with higher sale prices.  So the market is happy with a certain level of condition and doesn't value anything rated higher with a particular premium. Our OverallCondBad boolean might capture the actual variation due to the condition rating.
+
+
+
+### Additional Feature Combinations
+
+There are several other logical combinations of features that we want to explore.
+
+#### AllSizesSum
+
+This is a feature introduced by Choudhary.  It adds lengths and areas, but we'll include it along with several variations. 
+```{r allsizessum1}
+df$AllSizesSum <- df$LotFrontage + df$LotArea + df$MasVnrArea + df$BsmtFinSF1 + df$BsmtFinSF2 + df$BsmtUnfSF +
+                 df$TotalBsmtSF + df$X1stFlrSF + df$X2ndFlrSF + df$GrLivArea + df$GarageArea + df$WoodDeckSF + 
+                 df$OpenPorchSF + df$EnclosedPorch + df$X3SsnPorch + df$ScreenPorch + df$LowQualFinSF + df$PoolArea
+
+ggplot(data=df, aes(df$AllSizesSum,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df, aes(log(df$AllSizesSum),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+which(df$AllSizesSum > 100000)
+which(df$AllSizesSum > 75000)
+which(df$AllSizesSum[1:train_size] > 50000)
+# 524 and 1299 were GrLivArea outliers
+
+```
+
+Because of the pressure of outliers, we will also linearize this
+```{r allsizessum2}
+df$AllSizesSumLin <- log(df$AllSizesSum+1)
+
+allsizessum_mod = lm(SalePrice ~ AllSizesSumLin + sqrt(AllSizesSumLin), data = df)
+summary(allsizessum_mod)
+
+df$AllSizesSumLin <- as.numeric(allsizessum_mod$coefficients[2]) * df$AllSizesSumLin +
+  as.numeric(allsizessum_mod$coefficients[3]) * sqrt(df$AllSizesSumLin) 
+
+ggplot(data=df, aes(df$AllSizesSumLin,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+```
+
+In keeping with the theme, we also examine the weighted sum of all areas:
+```{r areasum1}
+areamodel = lm(SalePrice ~ LotArea +  TotalBsmtSF + GrLivArea + GarageArea + WoodDeckSF +
+                 OpenPorchSF + EnclosedPorch + X3SsnPorch + ScreenPorch + PoolArea, data =df)
+summary(areamodel)
+
+df$AreasSum <- as.numeric(areamodel$coefficients[2]) * df$LotArea + 
+  as.numeric(areamodel$coefficients[3]) * df$TotalBsmtSF + 
+  as.numeric(areamodel$coefficients[4]) * df$GrLivArea + 
+  as.numeric(areamodel$coefficients[5]) * df$GarageArea +
+  as.numeric(areamodel$coefficients[6]) * df$WoodDeckSF +
+  as.numeric(areamodel$coefficients[7]) * df$OpenPorchSF + 
+  as.numeric(areamodel$coefficients[8]) * df$EnclosedPorch +
+  as.numeric(areamodel$coefficients[9]) * df$X3SsnPorch + 
+  as.numeric(areamodel$coefficients[10]) * df$ScreenPorch +
+  as.numeric(areamodel$coefficients[11]) * df$PoolArea
+
+ggplot(data=df, aes(df$AreasSum,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df, aes(log(df$AreasSum+1),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x +sqrt(x))
+
+df$AreasSum <-  log(df$AreasSum+1)
+```
+
+Another possibility is the total living area
+```{r livarea1}
+livingareamodel = lm(SalePrice ~ BsmtFinSF1 + BsmtFinSF2  + GrLivArea, data = df)
+summary(livingareamodel)
+
+df$LivArea <- df$BsmtFinSF1 + df$BsmtFinSF2 + df$GrLivArea
+
+df$LivAreaWt <- as.numeric(livingareamodel$coefficients[2]) * df$BsmtFinSF1 + 
+  as.numeric(livingareamodel$coefficients[3]) * df$BsmtFinSF2 + 
+  as.numeric(livingareamodel$coefficients[4]) * df$GrLivArea
+
+ggplot(data=df, aes(df$LivArea,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df, aes(log(df$LivArea+1),df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df, aes(df$LivAreaWt,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df, aes(log(df$LivAreaWt+1),df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x + sqrt(x))
+
+df$LivArea <- log(df$LivArea+1)
+df$LivAreaWt <- log(df$LivAreaWt+1)
+
+LivArea.mod = lm(SalePrice ~ LivArea + sqrt(LivArea), data=df)
+summary(LivArea.mod)
+
+df$LivArea <- as.numeric(LivArea.mod$coefficients[2]) * df$LivArea + 
+  as.numeric(LivArea.mod$coefficients[3]) * sqrt(df$LivArea)
+
+LivAreaWt.mod = lm(SalePrice ~ LivAreaWt + sqrt(LivAreaWt), data=df)
+summary(LivAreaWt.mod)
+
+df$LivAreaWt <- as.numeric(LivAreaWt.mod$coefficients[2]) * df$LivAreaWt + 
+  as.numeric(LivAreaWt.mod$coefficients[3]) * sqrt(df$LivAreaWt)
+
+ggplot(data=df, aes(df$LivArea,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x )
+
+ggplot(data=df, aes(df$LivAreaWt,df$SalePrice)) + geom_point()+
+  geom_smooth(method='lm', formula = y ~ x )
+```
+
+### Remaining Numerical Features
+
+#### BsmtUnfSF
+```{r bunf1}
+ggplot(data=df, aes(df$BsmtUnfSF,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(log(df$BsmtUnfSF+1),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+```
+
+This is not great, but there's no good reason to transform it.
+
+#### LowQualFinSF
+```{r lowqualbsf1}
+ggplot(data=df, aes(df$LowQualFinSF,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(log(df$LowQualFinSF+1),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+length(which(df$LowQualFinSF > 0))
+```
+
+This has very low statistics, so we might want to drop it.
+
+#### BedroomAbvGr and KitchenAbvGr
+```{r bedrms1}
+ggplot(data=df, aes(df$BedroomAbvGr,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(log(df$BedroomAbvGr+1),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(df$KitchenAbvGr,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(log(df$KitchenAbvGr+1),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+```
+
+#### GarageYrBlt
+
+We will set this up in order to do an separate regression on only the homes with garages.  When regressing on the entire data set, we should drop the columns associated with the GarageAge.
+```{r garageyr1}
+df_garage <- subset(df, df$NoGarage == 0)
+df_garage$GarageYrBlt <- as.numeric(df_garage$GarageYrBlt)
+
+df_garage$GarageAge <- df_garage$YrSold - df_garage$GarageYrBlt 
+  
+ggplot(data=df_garage, aes(df_garage$GarageAge,df_garage$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+ggplot(data=df_garage, aes(log(df_garage$GarageAge+2),df_garage$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x + sqrt(x))
+
+summary(df_garage$GarageAge)
+
+df_garage$GarageAgeLin <- log(df_garage$GarageAge+2)
+
+garageage.mod = lm(data=df_garage, SalePrice ~ GarageAgeLin + sqrt(GarageAgeLin))
+summary(garageage.mod)
+
+df_garage$GarageAgeLin <- as.numeric(garageage.mod$coefficients[2]) * df_garage$GarageAgeLin +
+  as.numeric(garageage.mod$coefficients[3]) * sqrt(df_garage$GarageAgeLin)
+
+ggplot(data=df_garage, aes(df_garage$GarageAgeLin,df_garage$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+df <- merge(x = df, y = df_garage, by = names(df), all.x = TRUE)
+
+# df$GarageAge[which(is.na(df$GarageAge))] <- rep('None')
+# df$GarageAgeLin[which(is.na(df$GarageAgeLin))] <- rep('None')
+
+df$GarageYrBlt <- NULL
+```
+
+#### PoolArea
+
+With only 13 houses with pools, we can't regress on this with any significance. We will setup a boolean:
+```{r poola1}
+length(which(df$PoolArea > 0))
+
+df$HasPool <- 0
+df$HasPool[df$PoolArea > 0] <- 1
+df$PoolArea <- NULL
+```
+
+#### MiscVal
+
+```{r miscval1}
+length(which(df$MiscVal > 0))
+
+ggplot(data=df, aes(df$MiscVal,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(log(df$MiscVal+1),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+df$MiscVal <- NULL
+```
+
+There doesn't seem to be any useful functional relationship here, even if we forget about the large number of observations at zero.  We won't regress on this.
+
+#### MoSold
+
+```{r mosold2}
+
+ggplot(data=df, aes(df$MoSold,df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+ggplot(data=df, aes(log(df$MoSold+1),df$SalePrice)) + geom_point() +
+  geom_smooth(method = 'lm', formula = y ~ x )
+
+df$MoSold <- as.factor(df$MoSold)
+df$YrSold <- as.factor(df$YrSold)
+df$YrSoldcat <- NULL
+# cleaning up unnecessary features
+```
+
+This doesn't seem too interesting.
+
+## More Preprocessing
+
+At this point, the only NAs are in SalePrice, GarageAge and GarageAgeLin. We want to range the numeric features, besides Id and SalePrice, as well as create numerical dummies for the factors. We will use caret.
+```{r pp2}
+train_df <- df[1:train_size, -72]
+saleprice_df <- data.frame(df[1:train_size, c(1,72,73)])
+test_df <- df[(train_size + 1):(train_size + 1459),-72]
+
+train_df[,'HouseId'] <- sapply(train_df[,'HouseId'] , as.character)
+test_df[,'HouseId'] <- sapply(test_df[,'HouseId'] , as.character)
+
+pprules <- preProcess(train_df,  method = c("range"))
+
+train_pp_df <- data.frame(predict(pprules, newdata = train_df))
+test_pp_df <- data.frame(predict(pprules, newdata = test_df))
+
+train_pp_df$Id <- as.numeric(row.names(train_pp_df))
+test_pp_df$Id <- as.numeric(row.names(test_pp_df))
+
+train_pp_df[,'HouseId'] <- sapply(train_pp_df[,'HouseId'] , as.numeric)
+test_pp_df[,'HouseId'] <- sapply(test_pp_df[,'HouseId'] , as.numeric)
+
+# train_pp_df <- merge(x = train_pp_df, y = saleprice_df, by = 'Id', all.x = TRUE)
+
+train_pp_df <- merge(x = train_pp_df, y = saleprice_df, by = 'HouseId', all.x = TRUE)
+
+train_pp_df$Id.x <- NULL
+train_pp_df$Id.y <- NULL
+
+dummies <- dummyVars(~ ., data = train_pp_df)
+
+train_ppd_df <- data.frame(predict(dummies, newdata = train_pp_df))
+
+# test needs to have same columns as train
+test_pp_df$SalePrice <- rep(0)
+test_ppd_df <- data.frame(predict(dummies, newdata = test_pp_df))
+test_ppd_df$SalePrice <- NULL
+```
+
+We have to remove the levels that were missing in the test set
+```{r pp3}
+train_ppd_df$Condition.2RRAe <- NULL
+train_ppd_df$Condition.2RRAn <- NULL
+train_ppd_df$Condition.2RRNn <- NULL
+train_ppd_df$HouseStyle.2.5Fin <- NULL
+train_ppd_df$RoofMatl.ClyTile <- NULL
+train_ppd_df$RoofMatl.Membran <- NULL
+train_ppd_df$RoofMatl.Metal <- NULL
+train_ppd_df$RoofMatl.Roll <- NULL
+train_ppd_df$Exterior1st.ImStucc <- NULL
+train_ppd_df$Exterior1st.Stone <- NULL
+train_ppd_df$Exterior2nd.Other <- NULL
+train_ppd_df$Heating.Floor <- NULL
+train_ppd_df$Heating.OthW <- NULL
+train_ppd_df$Electrical.Mix <- NULL
+train_ppd_df$GarageQual.Ex <- NULL
+train_ppd_df$PoolQC.Fa <- NULL
+
+test_ppd_df$Condition.2RRAe <- NULL
+test_ppd_df$Condition.2RRAn <- NULL
+test_ppd_df$Condition.2RRNn <- NULL
+test_ppd_df$HouseStyle.2.5Fin <- NULL
+test_ppd_df$RoofMatl.ClyTile <- NULL
+test_ppd_df$RoofMatl.Membran <- NULL
+test_ppd_df$RoofMatl.Metal <- NULL
+test_ppd_df$RoofMatl.Roll <- NULL
+test_ppd_df$Exterior1st.ImStucc <- NULL
+test_ppd_df$Exterior1st.Stone <- NULL
+test_ppd_df$Exterior2nd.Other <- NULL
+test_ppd_df$Heating.Floor <- NULL
+test_ppd_df$Heating.OthW <- NULL
+test_ppd_df$Electrical.Mix <- NULL
+test_ppd_df$GarageQual.Ex <- NULL
+test_ppd_df$PoolQC.Fa <- NULL
+```
+
+Test for near-zero variance.
+```{r pp4}
+x = nearZeroVar(train_ppd_df, saveMetrics = TRUE)
+x[x[,"zeroVar"] > 0, ]
+
+summary(as.factor(train_ppd_df$MSSubClass.150))
+summary(as.factor(test_ppd_df$MSSubClass.150))
+
+train_ppd_df$MSSubClass.150 <- NULL
+test_ppd_df$MSSubClass.150 <- NULL
+```
+
+Look more features with very low statistics:
+```{r pp5}
+train_ppd_cols = colnames(train_ppd_df)
+
+train_ppd_cols_df = as.data.frame(train_ppd_cols)
+for (i in 1:nrow(train_ppd_cols_df)){
+  train_ppd_cols_df$count[i] <- length(which(train_ppd_df[train_ppd_cols[i]] !=0
+))
+}
+
+lowstat_df <- train_ppd_cols_df[which(train_ppd_cols_df$count <= 10),]
+lowstat_df
+
+verylowstat_df <- train_ppd_cols_df[which(train_ppd_cols_df$count <= 5),]
+verylowstat_df
+
+verylowstat_cols <- as.factor(verylowstat_df$train_ppd_cols)
+
+for (i in verylowstat_cols){
+  train_ppd_df[i] <- NULL
+  test_ppd_df[i] <- NULL
+}
+```
+
+We've dropped any feature that had 5 or less observations in the training set.  Now we want to look for very highly correlated features.  We can start by guessing that there are some in the Garage and Basement subsets
+```{r pp6}
+train_ppd_cols <- colnames(train_ppd_df)
+
+
+garage_cols <- grep("Garage+", train_ppd_cols, perl=TRUE, value=TRUE)
+garage_cor  <- abs(cor(train_ppd_df[garage_cols]))
+diag(garage_cor) <- 0
+which(garage_cor == 1, arr.ind = T)
+
+train_ppd_df$GarageFinish.None <- NULL
+train_ppd_df$GarageQual.None <- NULL 
+train_ppd_df$GarageCond.None <- NULL 
+train_ppd_df$GarageType.None <- NULL
+test_ppd_df$GarageFinish.None <- NULL
+test_ppd_df$GarageQual.None <- NULL 
+test_ppd_df$GarageCond.None <- NULL 
+test_ppd_df$GarageType.None <- NULL
+
+basement_cols <- grep("Bsmt+", train_ppd_cols, perl=TRUE, value=TRUE)
+basement_cols <- append(basement_cols, "NoBasement")
+basement_cols
+basement_cor  <- abs(cor(train_ppd_df[basement_cols]))
+diag(basement_cor) <- 0
+which(basement_cor > 0.99, arr.ind = T)
+
+train_ppd_df$BsmtCond.None <- NULL
+train_ppd_df$BsmtExposure.None <- NULL
+train_ppd_df$BsmtFinType1.None <- NULL
+train_ppd_df$BsmtFinType2.None <- NULL
+train_ppd_df$BsmtQual.None <- NULL 
+test_ppd_df$BsmtCond.None <- NULL
+test_ppd_df$BsmtExposure.None <- NULL
+test_ppd_df$BsmtFinType1.None <- NULL
+test_ppd_df$BsmtFinType2.None <- NULL
+test_ppd_df$BsmtQual.None <- NULL 
+```
+
+Now the numerical variables.
+```{r pp7}
+nums <- sapply(train_ppd_df, is.numeric)
+nums["SalePrice"] <- FALSE
+
+correlmatrix <- abs(cor(train_ppd_df[nums]))
+diag(correlmatrix) <- 0
+which(correlmatrix > 0.99, arr.ind = T)
+
+train_ppd_df$Street.Pave <- NULL
+train_ppd_df$MSSubClass.190 <- NULL
+train_ppd_df$MSSubClass.90 <- NULL
+train_ppd_df$PoolQC.None <- NULL
+test_ppd_df$Street.Pave <- NULL
+test_ppd_df$MSSubClass.190 <- NULL
+test_ppd_df$MSSubClass.90 <- NULL
+test_ppd_df$PoolQC.None <- NULL
+```
+
+Finally we'll write our tidy data to a file.
+```{r pp8}
+dim(train_ppd_df)
+dim(test_ppd_df)
+
+# write our cleaned data to a file
+write.csv(train_ppd_df, file = train_output, row.names = FALSE)
+write.csv(test_ppd_df, file = test_output, row.names = FALSE)
+```
+
+We'll fit our models in python.  
+
+Note: GarageAge and GarageAgeLin both have NAs and should be dropped if we're not restricting to the subset with 
+NoGarage == 0.
