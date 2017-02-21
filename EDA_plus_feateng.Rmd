@@ -58,18 +58,18 @@ df$HouseId <- df$Id
 rel_outliers = c(31, 496, 524, 534, 692, 917, 969, 1183, 1299)
 
 # Modify by hand to drop desired subset of outliers, then adjust the output file name
-# drop_set <- c(524, 692, 1183, 1299)
+drop_set <- c(31, 496, 524, 534, 917, 969, 1183, 1299)
 # 
 # 
 # 
-# df <- df[-drop_set,]
-# train_size <- train_size - length(drop_set)
+df <- df[-drop_set,]
+train_size <- train_size - length(drop_set)
 
 # Use one-hot coding in output file name
 # train_output <- "train_tidy-new.csv"
 # test_output <- "test_tidy-new.csv"
-train_output <- "train_tidy_000000000.csv"
-test_output <- "test_tidy_000000000.csv"
+train_output <- "train_tidy_111101111.csv"
+test_output <- "test_tidy_111101111.csv"
 ```
 
 ## First Round

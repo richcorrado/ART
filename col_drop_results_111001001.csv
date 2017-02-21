@@ -1,0 +1,65 @@
+,Dropped,RMSE,Diff from Base
+50,"('LogGrLivArea', 'TotalHouseArea', 'LivAreaWt', 'AreasSum')",0.107223131082,-0.00167890451411
+28,"('LogGrLivArea', 'TotalHouseArea', 'AreasSum')",0.107469517505,-0.00143251809139
+59,"('LogGrLivArea', 'GrLivArea', 'TotalHouseArea', 'LivAreaWt', 'AreasSum')",0.107520505324,-0.00138153027164
+44,"('LogGrLivArea', 'GrLivArea', 'TotalHouseArea', 'AreasSum')",0.107525174608,-0.00137686098757
+58,"('LogGrLivArea', 'GrLivArea', 'TotalHouseArea', 'LivArea', 'AreasSum')",0.107601851185,-0.00130018441074
+49,"('LogGrLivArea', 'TotalHouseArea', 'LivArea', 'AreasSum')",0.10771577702,-0.00118625857568
+39,"('TotalHouseArea', 'LivArea', 'AreasSum')",0.107747701635,-0.00115433396089
+31,"('LogGrLivArea', 'LivAreaWt', 'AreasSum')",0.107771982413,-0.00113005318265
+21,"('LivAreaWt', 'AreasSum')",0.107772880398,-0.00112915519769
+47,"('LogGrLivArea', 'GrLivArea', 'LivAreaWt', 'AreasSum')",0.107848213238,-0.0010538223575
+11,"('LogGrLivArea', 'AreasSum')",0.107866618569,-0.00103541702704
+6,"('AreasSum',)",0.107871909596,-0.00103012599994
+61,"('LogGrLivArea', 'TotalHouseArea', 'LivArea', 'LivAreaWt', 'AreasSum')",0.107956128029,-0.000945907567349
+30,"('LogGrLivArea', 'LivArea', 'AreasSum')",0.108007560372,-0.000894475223864
+51,"('LogGrLivArea', 'LivArea', 'LivAreaWt', 'AreasSum')",0.108008011997,-0.00089402359916
+20,"('LivArea', 'AreasSum')",0.108010265828,-0.000891769767517
+40,"('TotalHouseArea', 'LivAreaWt', 'AreasSum')",0.108116696253,-0.000785339342768
+36,"('GrLivArea', 'LivArea', 'AreasSum')",0.108172541787,-0.000729493809317
+56,"('TotalHouseArea', 'LivArea', 'LivAreaWt', 'AreasSum')",0.108203676889,-0.000698358706804
+29,"('LogGrLivArea', 'LivArea', 'LivAreaWt')",0.108251086415,-0.000650949180911
+46,"('LogGrLivArea', 'GrLivArea', 'LivArea', 'AreasSum')",0.108284379837,-0.000617655759169
+15,"('GrLivArea', 'AreasSum')",0.108286736776,-0.000615298819894
+34,"('GrLivArea', 'TotalHouseArea', 'AreasSum')",0.108326342667,-0.000575692928579
+63,"('LogGrLivArea', 'GrLivArea', 'TotalHouseArea', 'LivArea', 'LivAreaWt', 'AreasSum')",0.108348607641,-0.000553427954645
+53,"('GrLivArea', 'TotalHouseArea', 'LivArea', 'AreasSum')",0.108374364786,-0.000527670809724
+60,"('LogGrLivArea', 'GrLivArea', 'LivArea', 'LivAreaWt', 'AreasSum')",0.108376349636,-0.000525685960323
+45,"('LogGrLivArea', 'GrLivArea', 'LivArea', 'LivAreaWt')",0.108387195814,-0.000514839781497
+5,"('LivAreaWt',)",0.108524118043,-0.000377917553243
+24,"('LogGrLivArea', 'GrLivArea', 'LivAreaWt')",0.10854260843,-0.000359427165494
+25,"('LogGrLivArea', 'GrLivArea', 'AreasSum')",0.108600987344,-0.000301048251846
+54,"('GrLivArea', 'TotalHouseArea', 'LivAreaWt', 'AreasSum')",0.108686356983,-0.000215678613468
+1,"('LogGrLivArea',)",0.108757889404,-0.000144146191575
+7,"('LogGrLivArea', 'GrLivArea')",0.108791525025,-0.000110510571275
+41,"('LivArea', 'LivAreaWt', 'AreasSum')",0.108839929732,-6.21058641213e-05
+0,(),0.108902035596,0.0
+8,"('LogGrLivArea', 'TotalHouseArea')",0.109018476069,0.000116440473051
+10,"('LogGrLivArea', 'LivAreaWt')",0.109024011366,0.00012197577048
+3,"('TotalHouseArea',)",0.10902527172,0.000123236124284
+18,"('TotalHouseArea', 'AreasSum')",0.109076942297,0.000174906700743
+27,"('LogGrLivArea', 'TotalHouseArea', 'LivAreaWt')",0.10908236976,0.000180334164205
+17,"('TotalHouseArea', 'LivAreaWt')",0.109099050671,0.000197015074671
+2,"('GrLivArea',)",0.109206951425,0.000304915828944
+26,"('LogGrLivArea', 'TotalHouseArea', 'LivArea')",0.109208297729,0.00030626213351
+16,"('TotalHouseArea', 'LivArea')",0.109215744933,0.000313709336974
+48,"('LogGrLivArea', 'TotalHouseArea', 'LivArea', 'LivAreaWt')",0.109307848708,0.000405813112228
+19,"('LivArea', 'LivAreaWt')",0.109319892989,0.000417857392546
+12,"('GrLivArea', 'TotalHouseArea')",0.10936828539,0.000466249794516
+22,"('LogGrLivArea', 'GrLivArea', 'TotalHouseArea')",0.109380154593,0.000478118997279
+38,"('TotalHouseArea', 'LivArea', 'LivAreaWt')",0.109409287849,0.000507252252645
+4,"('LivArea',)",0.109414978055,0.000512942459378
+42,"('LogGrLivArea', 'GrLivArea', 'TotalHouseArea', 'LivArea')",0.109439246547,0.000537210950901
+55,"('GrLivArea', 'LivArea', 'LivAreaWt', 'AreasSum')",0.109565772736,0.000663737140418
+62,"('GrLivArea', 'TotalHouseArea', 'LivArea', 'LivAreaWt', 'AreasSum')",0.109573332522,0.000671296925734
+33,"('GrLivArea', 'TotalHouseArea', 'LivAreaWt')",0.109627244925,0.000725209328687
+43,"('LogGrLivArea', 'GrLivArea', 'TotalHouseArea', 'LivAreaWt')",0.109647245694,0.000745210097611
+32,"('GrLivArea', 'TotalHouseArea', 'LivArea')",0.109749182818,0.000847147222268
+9,"('LogGrLivArea', 'LivArea')",0.109761192304,0.000859156707683
+23,"('LogGrLivArea', 'GrLivArea', 'LivArea')",0.109790412567,0.000888376971082
+37,"('GrLivArea', 'LivAreaWt', 'AreasSum')",0.109937087042,0.00103505144622
+14,"('GrLivArea', 'LivAreaWt')",0.110142169286,0.00124013369048
+35,"('GrLivArea', 'LivArea', 'LivAreaWt')",0.110294329587,0.00139229399137
+57,"('LogGrLivArea', 'GrLivArea', 'TotalHouseArea', 'LivArea', 'LivAreaWt')",0.11031491279,0.00141287719365
+13,"('GrLivArea', 'LivArea')",0.110320982146,0.00141894654977
+52,"('GrLivArea', 'TotalHouseArea', 'LivArea', 'LivAreaWt')",0.110360096758,0.00145806116185
