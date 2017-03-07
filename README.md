@@ -4,4 +4,4 @@ engineering is in the EDA_plus_feateng.Rmd file, which was also used to create t
 Outlier, feature selection and modeling was done in the relevant jupyter notebooks. The notebook Subsetting 111001001.ipynb 
 is the file where the submissions were generated.
 
-Please see the file https://github.com/richcorrado/Housing-Prices-ART/blob/master/overview.html for a detailed overview of the results of the analysis.
+Please see https://richcorrado.github.io/houseprices-overview.html for a detailed overview of the results of the analysis.
